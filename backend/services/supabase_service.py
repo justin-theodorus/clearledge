@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal
 from functools import lru_cache
 from typing import Optional
 
@@ -49,7 +50,7 @@ def get_invoice(invoice_id: str) -> dict:
     client = get_supabase()
     res = (
         client.table("invoices")
-        .select("id,invoice_no,amount,currency")
+        .select("id,invoice_no,client_name,amount,currency")
         .eq("id", invoice_id)
         .limit(1)
         .execute()
@@ -92,3 +93,32 @@ def get_latest_proof_extracted(invoice_id: str) -> Optional[dict]:
     if not rows:
         return None
     return rows[0].get("extracted_data")
+
+
+def _latest_proof_id(invoice_id: str) -> Optional[str]:
+    client = get_supabase()
+    res = (
+        client.table("proofs")
+        .select("id")
+        .eq("invoice_id", invoice_id)
+        .order("uploaded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    return rows[0]["id"] if rows else None
+
+
+def update_proof_match(invoice_id: str, status: str, confidence: Decimal) -> None:
+    proof_id = _latest_proof_id(invoice_id)
+    if not proof_id:
+        raise ProofNotFoundError(f"No proof found for invoice_id={invoice_id}")
+    client = get_supabase()
+    client.table("proofs").update(
+        {"match_status": status, "match_confidence": str(confidence)}
+    ).eq("id", proof_id).execute()
+
+
+def update_invoice_status(invoice_id: str, status: str) -> None:
+    client = get_supabase()
+    client.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
