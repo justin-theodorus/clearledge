@@ -1,13 +1,34 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent } from "react";
+import {
+  InvoiceData,
+  generateInvoiceNumber,
+  saveDraft,
+} from "@/app/lib/invoice";
 
 const CURRENCIES = ["USD", "MYR", "SGD", "IDR", "PHP", "THB"] as const;
 
 export function InvoiceForm() {
+  const router = useRouter();
+
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const data: InvoiceData = {
+      invoice_number: generateInvoiceNumber(),
+      client_name: String(fd.get("client_name") ?? "").trim(),
+      client_email: String(fd.get("client_email") ?? "").trim(),
+      amount: Number(fd.get("amount") ?? 0),
+      currency: String(fd.get("currency") ?? "USD"),
+      due_date: String(fd.get("due_date") ?? ""),
+      description: String(fd.get("description") ?? "").trim(),
+      issued_at: new Date().toISOString(),
+    };
+    saveDraft(data);
+    router.push("/invoices/new/send");
   }
 
   return (
