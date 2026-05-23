@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from typing import Optional
 
 from supabase import Client, create_client
 from supabase.client import ClientOptions
@@ -34,3 +35,60 @@ def get_latest_proof_url(invoice_id: str) -> str:
     if not rows:
         raise ProofNotFoundError(f"No proof found for invoice_id={invoice_id}")
     return rows[0]["proof_url"]
+
+
+class TransactionNotFoundError(Exception):
+    pass
+
+
+class InvoiceNotFoundError(Exception):
+    pass
+
+
+def get_invoice(invoice_id: str) -> dict:
+    client = get_supabase()
+    res = (
+        client.table("invoices")
+        .select("id,invoice_no,amount,currency")
+        .eq("id", invoice_id)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        raise InvoiceNotFoundError(f"No invoice found for id={invoice_id}")
+    return rows[0]
+
+
+def get_transaction_for_invoice(invoice_id: str) -> dict:
+    client = get_supabase()
+    res = (
+        client.table("transactions")
+        .select("amount_received,currency_received,paid_at")
+        .eq("invoice_id", invoice_id)
+        .order("paid_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        raise TransactionNotFoundError(
+            f"No transaction found for invoice_id={invoice_id}"
+        )
+    return rows[0]
+
+
+def get_latest_proof_extracted(invoice_id: str) -> Optional[dict]:
+    client = get_supabase()
+    res = (
+        client.table("proofs")
+        .select("extracted_data")
+        .eq("invoice_id", invoice_id)
+        .order("uploaded_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    if not rows:
+        return None
+    return rows[0].get("extracted_data")
