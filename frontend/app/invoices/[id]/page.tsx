@@ -44,6 +44,17 @@ export default async function InvoiceDetailPage({
   if (!data) notFound();
   const invoice = data as InvoiceRow;
 
+  const { data: proof } = await supabase
+    .from("proofs")
+    .select("proof_url, uploaded_at")
+    .eq("invoice_id", id)
+    .order("uploaded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const proofIsImage = proof?.proof_url
+    ? /\.(png|jpe?g|gif|webp|heic|avif)(\?|$)/i.test(proof.proof_url)
+    : false;
+
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-10">
       <div className="mb-6 flex items-center justify-between">
@@ -66,8 +77,9 @@ export default async function InvoiceDetailPage({
 
       {paid === "1" ? (
         <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
-          Stripe reported payment success. Reconciliation is pending — the
-          webhook will flip status to PAID once wired up.
+          {invoice.status === "PENDING"
+            ? "Payment confirmed by Stripe — reconciling…"
+            : "Payment received."}
         </div>
       ) : null}
 
@@ -111,6 +123,46 @@ export default async function InvoiceDetailPage({
         ) : (
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             No payment link on file yet.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">Proof of payment</h2>
+          <Link
+            href={`/invoices/${invoice.id}/proof`}
+            className="text-xs text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            {proof ? "Upload another" : "Upload"}
+          </Link>
+        </div>
+        {proof ? (
+          <div className="mt-3">
+            {proofIsImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={proof.proof_url}
+                alt="Payment proof"
+                className="max-h-64 rounded-md border border-zinc-200 object-contain dark:border-zinc-800"
+              />
+            ) : (
+              <a
+                href={proof.proof_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm underline"
+              >
+                Open proof file
+              </a>
+            )}
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Uploaded {formatDate(proof.uploaded_at)}
+            </p>
+          </div>
+        ) : (
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            No proof uploaded yet.
           </p>
         )}
       </div>

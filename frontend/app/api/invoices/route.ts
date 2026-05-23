@@ -96,7 +96,7 @@ export async function POST(req: Request) {
         },
       ],
       customer_email: body.client_email,
-      success_url: `${baseUrl}/invoices/${invoiceId}?paid=1`,
+      success_url: `${baseUrl}/invoices/${invoiceId}/proof?paid=1`,
       cancel_url: `${baseUrl}/invoices/${invoiceId}`,
       metadata: {
         invoice_id: invoiceId,

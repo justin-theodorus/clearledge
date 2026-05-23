@@ -1,6 +1,33 @@
 import Link from "next/link";
+import { getSupabaseAdmin } from "@/app/lib/server/supabase";
+import { StatusBadge, InvoiceStatus } from "@/app/components/StatusBadge";
+import { formatDate, formatMoney } from "@/app/lib/invoice";
 
-export default function DashboardPage() {
+export const dynamic = "force-dynamic";
+
+type InvoiceRow = {
+  id: string;
+  invoice_no: string;
+  client_name: string;
+  amount: number;
+  currency: string;
+  status: InvoiceStatus;
+  created_at: string;
+};
+
+export default async function DashboardPage() {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("id,invoice_no,client_name,amount,currency,status,created_at")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    console.error("[dashboard] invoices fetch failed", error);
+  }
+  const invoices = (data ?? []) as InvoiceRow[];
+
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-10">
       <div className="mb-6 flex flex-col gap-1">
@@ -79,21 +106,51 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-              <tr>
-                <td
-                  colSpan={5}
-                  className="px-4 py-16 text-center text-sm text-zinc-500 dark:text-zinc-400"
-                >
-                  No invoices yet.{" "}
-                  <Link
-                    href="/invoices/new"
-                    className="font-medium text-zinc-900 underline-offset-2 hover:underline dark:text-zinc-50"
+              {invoices.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-4 py-16 text-center text-sm text-zinc-500 dark:text-zinc-400"
                   >
-                    Create your first invoice
-                  </Link>
-                  .
-                </td>
-              </tr>
+                    No invoices yet.{" "}
+                    <Link
+                      href="/invoices/new"
+                      className="font-medium text-zinc-900 underline-offset-2 hover:underline dark:text-zinc-50"
+                    >
+                      Create your first invoice
+                    </Link>
+                    .
+                  </td>
+                </tr>
+              ) : (
+                invoices.map((inv) => (
+                  <tr
+                    key={inv.id}
+                    className="hover:bg-zinc-50 dark:hover:bg-zinc-900"
+                  >
+                    <td className="px-4 py-3 text-sm font-medium">
+                      <Link
+                        href={`/invoices/${inv.id}`}
+                        className="text-zinc-900 hover:underline dark:text-zinc-50"
+                      >
+                        {inv.invoice_no}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
+                      {inv.client_name}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
+                      {formatMoney(Number(inv.amount), inv.currency)}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <StatusBadge status={inv.status} />
+                    </td>
+                    <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                      {formatDate(inv.created_at)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
