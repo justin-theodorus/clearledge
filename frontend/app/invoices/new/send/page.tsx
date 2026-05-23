@@ -2,8 +2,15 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { InvoiceData, formatDate, formatMoney, loadDraft } from "@/app/lib/invoice";
+import {
+  InvoiceData,
+  clearDraft,
+  formatDate,
+  formatMoney,
+  loadDraft,
+} from "@/app/lib/invoice";
 
 const STORAGE_EVENT = "clearledge:draft-change";
 
@@ -42,13 +49,38 @@ const PdfPanel = dynamic(() => import("./PdfPanel").then((m) => m.PdfPanel), {
 });
 
 export default function SendInvoicePage() {
+  const router = useRouter();
   const draft = useSyncExternalStore(
     subscribe,
     getClientSnapshot,
     getServerSnapshot,
   );
   const [emailOverride, setEmailOverride] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const email = emailOverride ?? draft?.client_email ?? "";
+
+  async function handleSend() {
+    if (!draft) return;
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/invoices", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...draft, recipient_email: email }),
+      });
+      const json = await res.json();
+      if (!res.ok && res.status !== 207) {
+        throw new Error(json.error ?? "Failed to send");
+      }
+      clearDraft();
+      router.push(`/invoices/${json.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to send");
+      setSending(false);
+    }
+  }
 
   const summary = useMemo(() => {
     if (!draft) return null;
@@ -130,14 +162,15 @@ export default function SendInvoicePage() {
           />
           <button
             type="button"
-            onClick={() => {}}
-            className="mt-2 w-full rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
+            onClick={handleSend}
+            disabled={sending || !email}
+            className="mt-2 w-full rounded-full bg-zinc-900 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
           >
-            Send payment link
+            {sending ? "Sending…" : "Send payment link"}
           </button>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Sending will be wired up once the backend is online.
-          </p>
+          {error ? (
+            <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+          ) : null}
         </aside>
       </div>
     </div>

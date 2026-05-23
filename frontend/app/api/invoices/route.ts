@@ -1,0 +1,152 @@
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/app/lib/server/supabase";
+import { getStripe } from "@/app/lib/server/stripe";
+import { sendPaymentLinkEmail } from "@/app/lib/server/resend";
+import { InvoiceData } from "@/app/lib/invoice";
+
+type Body = InvoiceData & { recipient_email?: string };
+
+function validate(body: unknown): Body | string {
+  if (!body || typeof body !== "object") return "Invalid body";
+  const b = body as Record<string, unknown>;
+  const requiredStrings = [
+    "invoice_number",
+    "client_name",
+    "client_email",
+    "currency",
+    "due_date",
+    "issued_at",
+  ];
+  for (const k of requiredStrings) {
+    if (typeof b[k] !== "string" || !(b[k] as string).trim()) {
+      return `Missing field: ${k}`;
+    }
+  }
+  if (typeof b.amount !== "number" || !(b.amount > 0)) {
+    return "amount must be a positive number";
+  }
+  if ((b.currency as string).length !== 3) {
+    return "currency must be a 3-letter code";
+  }
+  if (typeof b.description !== "string") b.description = "";
+  if (b.recipient_email != null && typeof b.recipient_email !== "string") {
+    return "recipient_email must be a string";
+  }
+  return b as unknown as Body;
+}
+
+export async function POST(req: Request) {
+  let json: unknown;
+  try {
+    json = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = validate(json);
+  if (typeof parsed === "string") {
+    return NextResponse.json({ error: parsed }, { status: 400 });
+  }
+  const body = parsed;
+
+  const supabase = getSupabaseAdmin();
+  const stripe = getStripe();
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("invoices")
+    .insert({
+      invoice_no: body.invoice_number,
+      client_name: body.client_name,
+      client_email: body.client_email,
+      amount: body.amount,
+      currency: body.currency.toUpperCase(),
+      due_date: body.due_date,
+      status: "PENDING",
+    })
+    .select("id")
+    .single();
+
+  if (insertErr || !inserted) {
+    console.error("[invoices] insert failed", insertErr);
+    return NextResponse.json(
+      { error: "Failed to save invoice" },
+      { status: 500 },
+    );
+  }
+  const invoiceId = inserted.id as string;
+
+  const baseUrl =
+    process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
+
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: body.currency.toLowerCase(),
+            unit_amount: Math.round(body.amount * 100),
+            product_data: {
+              name: `Invoice ${body.invoice_number}`,
+              description: body.description || undefined,
+            },
+          },
+        },
+      ],
+      customer_email: body.client_email,
+      success_url: `${baseUrl}/invoices/${invoiceId}?paid=1`,
+      cancel_url: `${baseUrl}/invoices/${invoiceId}`,
+      metadata: {
+        invoice_id: invoiceId,
+        invoice_no: body.invoice_number,
+      },
+    });
+  } catch (e) {
+    console.error("[invoices] stripe session failed", e);
+    return NextResponse.json(
+      { error: "Failed to create payment link" },
+      { status: 502 },
+    );
+  }
+
+  if (!session.url) {
+    return NextResponse.json(
+      { error: "Stripe returned no URL" },
+      { status: 502 },
+    );
+  }
+
+  const { error: updateErr } = await supabase
+    .from("invoices")
+    .update({
+      stripe_session_id: session.id,
+      payment_link: session.url,
+    })
+    .eq("id", invoiceId);
+
+  if (updateErr) {
+    console.error("[invoices] update with stripe ids failed", updateErr);
+  }
+
+  try {
+    await sendPaymentLinkEmail({
+      intendedRecipient: body.recipient_email || body.client_email,
+      invoice: body,
+      paymentUrl: session.url,
+    });
+  } catch (e) {
+    console.error("[invoices] resend failed", e);
+    return NextResponse.json(
+      {
+        id: invoiceId,
+        payment_link: session.url,
+        warning: "Invoice created but email failed to send",
+      },
+      { status: 207 },
+    );
+  }
+
+  return NextResponse.json({ id: invoiceId, payment_link: session.url });
+}
