@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
 import { formatMoney } from "@/app/lib/invoice";
@@ -54,15 +53,6 @@ export default async function ProofUploadPage({
 
       <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
         <ProofUploadForm invoiceId={data.id} />
-      </div>
-
-      <div className="mt-4 text-sm">
-        <Link
-          href={`/invoices/${data.id}`}
-          className="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
-        >
-          Skip for now →
-        </Link>
       </div>
     </div>
   );

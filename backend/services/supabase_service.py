@@ -109,6 +109,14 @@ def get_latest_proof_id(invoice_id: str) -> Optional[str]:
     return rows[0]["id"] if rows else None
 
 
+def update_latest_proof_extracted(invoice_id: str, payload: dict) -> None:
+    proof_id = get_latest_proof_id(invoice_id)
+    if not proof_id:
+        raise ProofNotFoundError(f"No proof found for invoice_id={invoice_id}")
+    client = get_supabase()
+    client.table("proofs").update({"extracted_data": payload}).eq("id", proof_id).execute()
+
+
 def update_proof_match(invoice_id: str, status: str, confidence: Decimal) -> None:
     proof_id = get_latest_proof_id(invoice_id)
     if not proof_id:

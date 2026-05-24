@@ -7,6 +7,7 @@ export function ProofUploadForm({ invoiceId }: { invoiceId: string }) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
@@ -28,11 +29,30 @@ export function ProofUploadForm({ invoiceId }: { invoiceId: string }) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error || "Upload failed");
       }
-      router.push(`/invoices/${invoiceId}`);
+      router.push(`/invoices/${invoiceId}?reconciling=1`);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
       setSubmitting(false);
+    }
+  }
+
+  async function onSkip() {
+    setSkipping(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/skip-proof`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || "Skip failed");
+      }
+      router.push(`/invoices/${invoiceId}?reconciling=1`);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Skip failed");
+      setSkipping(false);
     }
   }
 
@@ -51,10 +71,18 @@ export function ProofUploadForm({ invoiceId }: { invoiceId: string }) {
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={!file || submitting}
+          disabled={!file || submitting || skipping}
           className="rounded-md bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50 hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
         >
           {submitting ? "Uploading…" : "Upload proof"}
+        </button>
+        <button
+          type="button"
+          onClick={onSkip}
+          disabled={submitting || skipping}
+          className="text-sm text-zinc-600 underline-offset-2 hover:underline hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-50"
+        >
+          {skipping ? "Skipping…" : "Skip for now →"}
         </button>
       </div>
     </form>

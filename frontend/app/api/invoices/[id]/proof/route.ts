@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
+import { triggerOrchestrator } from "@/app/lib/server/orchestrator";
 
 export const runtime = "nodejs";
 
@@ -76,6 +77,8 @@ export async function POST(
     console.error("[proof] db insert failed", insErr);
     return NextResponse.json({ error: "Failed to save proof" }, { status: 500 });
   }
+
+  triggerOrchestrator(invoiceId);
 
   return NextResponse.json({ id: row.id, proof_url: proofUrl });
 }
