@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { RotateCcw, CheckCircle2, AlertTriangle, XCircle, Info } from "lucide-react";
 import { StatusBadge, InvoiceStatus } from "@/app/components/StatusBadge";
+import { ConfBar, ConfPill, clsx } from "@/app/components/ui/primitives";
 import { formatDate } from "@/app/lib/invoice";
 
 export type AuditEntry = {
@@ -12,43 +14,102 @@ export type AuditEntry = {
   summary: string;
   reasons: string[];
   capped: boolean;
+  signals?: Record<string, unknown> | null;
   created_at: string;
 };
 
 const POLL_INTERVAL_MS = 2000;
-// Long enough to cover the slowest case: ~10 Chutes calls (~5-30s each) for
-// the first orchestrator run, the 5-minute retry-once delay for
-// BANK_TRANSFER, plus the second run. 10 minutes leaves slack.
 const MAX_POLL_MS = 10 * 60 * 1000;
+
+function toneFor(status: InvoiceStatus): "emerald" | "amber" | "rose" | "primary" {
+  if (status === "RECONCILED") return "emerald";
+  if (status === "PARTIAL") return "amber";
+  if (status === "UNVERIFIED" || status === "ERROR") return "rose";
+  return "primary";
+}
+
+const SIGNAL_FIELDS = [
+  { key: "amount", label: "Amount" },
+  { key: "date", label: "Date" },
+  { key: "sender", label: "Sender" },
+  { key: "reference", label: "Reference" },
+] as const;
+
+function SignalChips({ signals }: { signals: Record<string, unknown> }) {
+  const items = SIGNAL_FIELDS.map((f) => {
+    const raw = signals[`${f.key}_score`];
+    const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+    return { ...f, score: Number.isFinite(n) ? n : null };
+  });
+  if (items.every((i) => i.score === null)) return null;
+  return (
+    <div className="cl-sig-grid">
+      {items.map((i) => (
+        <div key={i.key} className="cl-sig-chip">
+          <div className="cl-sig-head">
+            <span>{i.label}</span>
+            <span className="cl-mono">{i.score !== null ? i.score.toFixed(2) : "—"}</span>
+          </div>
+          <ConfBar value={i.score ?? 0} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function reasonIcon(reason: string, fallback: "emerald" | "amber" | "rose" | "primary") {
+  const s = reason.toLowerCase();
+  const negative =
+    /\b(no |without|couldn't|can't|haven't|didn't|doesn't|does not|do not|outside|off by|rejected|reject|fail|missing|absent)\b/.test(s);
+  const partial =
+    /(partial|partially|mostly|inside the ±|safety cap|capped|held for review)/.test(s);
+  const positive =
+    /(exactly|same day|near-exact|strongly|well inside|includes the invoice|every check passed|matches the|match to the client)/.test(s);
+  if (negative && positive) return { Icon: AlertTriangle, tone: "amber" as const };
+  if (negative) return { Icon: XCircle, tone: "rose" as const };
+  if (partial) return { Icon: AlertTriangle, tone: "amber" as const };
+  if (positive) return { Icon: CheckCircle2, tone: "emerald" as const };
+  return { Icon: Info, tone: fallback };
+}
+
+function ReasonList({ reasons, tone }: { reasons: string[]; tone: "emerald" | "amber" | "rose" | "primary" }) {
+  return (
+    <ul className="cl-reason-list">
+      {reasons.map((r, i) => {
+        const { Icon, tone: t } = reasonIcon(r, tone);
+        return (
+          <li key={i} className={clsx("cl-reason", `is-${t}`)}>
+            <Icon size={13} className="cl-reason-icon" />
+            <span>{r}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export function AuditTrail({
   invoiceId,
   initialEntries,
-  initialPending,
 }: {
   invoiceId: string;
   initialEntries: AuditEntry[];
-  initialPending: boolean;
 }) {
   const router = useRouter();
   const [entries, setEntries] = useState<AuditEntry[]>(initialEntries);
-  const [pending, setPending] = useState(initialPending);
+  const [pending, setPending] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const baselineCount = useRef(initialEntries.length);
-  const startedAt = useRef(Date.now());
+  const startedAt = useRef<number | null>(null);
 
   async function handleRetry() {
     setRetryError(null);
     try {
-      const res = await fetch(`/api/invoices/${invoiceId}/retry`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/invoices/${invoiceId}/retry`, { method: "POST" });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? "Retry failed");
       }
-      baselineCount.current = entries.length;
-      startedAt.current = Date.now();
+      startedAt.current = null;
       setPending(true);
     } catch (e) {
       setRetryError(e instanceof Error ? e.message : "Retry failed");
@@ -57,47 +118,36 @@ export function AuditTrail({
 
   useEffect(() => {
     if (!pending) return;
+    if (startedAt.current === null) startedAt.current = Date.now();
     let cancelled = false;
-
     async function tick() {
       try {
-        const res = await fetch(`/api/invoices/${invoiceId}/audit`, {
-          cache: "no-store",
-        });
+        const res = await fetch(`/api/invoices/${invoiceId}/audit`, { cache: "no-store" });
         if (!res.ok) return;
         const json = (await res.json()) as { entries: AuditEntry[] };
         if (cancelled) return;
-        // Keep refreshing entries on every tick so the BANK_TRANSFER
-        // retry-once run also surfaces without a manual refresh. We only
-        // stop polling once the MAX_POLL_MS window has elapsed.
         if (json.entries.length !== entries.length) {
           setEntries(json.entries);
           router.refresh();
         }
-      } catch {
-        // swallow — try again next tick
-      }
-      if (Date.now() - startedAt.current > MAX_POLL_MS) {
+      } catch {}
+      if (startedAt.current !== null && Date.now() - startedAt.current > MAX_POLL_MS) {
         if (!cancelled) setPending(false);
       }
     }
-
     const handle = setInterval(tick, POLL_INTERVAL_MS);
     tick();
-    return () => {
-      cancelled = true;
-      clearInterval(handle);
-    };
+    return () => { cancelled = true; clearInterval(handle); };
   }, [pending, invoiceId, entries.length, router]);
 
   return (
-    <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Audit trail</h2>
-        <div className="flex items-center gap-3">
+    <div className="cl-card">
+      <div className="cl-card-head">
+        <h2>Audit timeline</h2>
+        <div className="cl-row-gap">
           {pending ? (
-            <span className="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+            <span className="cl-row-gap" style={{ fontSize: 12, color: "var(--cl-amber)" }}>
+              <span className="cl-pill-dot" style={{ background: "var(--cl-amber)" }} />
               Reconciling…
             </span>
           ) : null}
@@ -105,109 +155,44 @@ export function AuditTrail({
             type="button"
             onClick={handleRetry}
             disabled={pending}
+            className="cl-btn is-sm"
             title="Re-run the reconciliation pipeline"
-            aria-label="Retry reconciliation"
-            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
           >
-            <RetryIcon className={pending ? "animate-spin" : ""} />
+            <RotateCcw size={12} className={pending ? "cl-spin" : ""} />
             Retry
           </button>
         </div>
       </div>
-      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        Every Matcher decision recorded for this invoice.
-      </p>
-      {retryError ? (
-        <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-          {retryError}
-        </p>
-      ) : null}
+      <div className="cl-card-pad">
+        {retryError ? (
+          <div className="cl-pill is-rose" style={{ marginBottom: 12 }}>{retryError}</div>
+        ) : null}
 
-      {pending && entries.length === 0 ? (
-        <div className="mt-4 space-y-3">
-          <SkeletonRow />
-        </div>
-      ) : entries.length === 0 ? (
-        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
-          No matcher runs yet.
-        </p>
-      ) : (
-        <ul className="mt-4 space-y-3">
-          {entries.map((entry) => (
-            <li
-              key={entry.id}
-              className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <StatusBadge status={entry.status} />
-                  <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
-                    {Number(entry.confidence).toFixed(3)}
-                  </span>
-                  {entry.capped ? (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                      Capped
-                    </span>
-                  ) : null}
-                </div>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  {formatDate(entry.created_at)}
-                </span>
-              </div>
-              <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
-                {entry.summary}
-              </p>
-              {entry.reasons?.length ? (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
-                    Reasons ({entry.reasons.length})
-                  </summary>
-                  <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
-                    {entry.reasons.map((r, i) => (
-                      <li key={i}>{r}</li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function RetryIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={`h-3.5 w-3.5 ${className}`}
-      aria-hidden
-    >
-      <path d="M3 12a9 9 0 1 0 3-6.7" />
-      <path d="M3 4v5h5" />
-    </svg>
-  );
-}
-
-function SkeletonRow() {
-  return (
-    <div className="animate-pulse rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-5 w-16 rounded-full bg-zinc-200 dark:bg-zinc-800" />
-          <div className="h-4 w-12 rounded bg-zinc-200 dark:bg-zinc-800" />
-        </div>
-        <div className="h-3 w-20 rounded bg-zinc-200 dark:bg-zinc-800" />
+        {pending && entries.length === 0 ? (
+          <div className="cl-empty">Waiting for pipeline to start…</div>
+        ) : entries.length === 0 ? (
+          <div className="cl-empty">No reconciliation runs yet.</div>
+        ) : (
+          <ol className="cl-timeline" style={{ margin: 0, padding: 0, listStyle: "none", paddingLeft: 28 }}>
+            {entries.map((e) => {
+              const tone = toneFor(e.status);
+              return (
+                <li key={e.id} className={clsx("cl-tl-item", `is-${tone}`)}>
+                  <span className="cl-tl-dot" />
+                  <div className="cl-tl-head">
+                    <StatusBadge status={e.status} />
+                    <ConfPill value={Number(e.confidence)} />
+                    {e.capped ? <span className="cl-tag" style={{ color: "var(--cl-amber)" }}>Capped</span> : null}
+                    <span className="cl-tl-time">{formatDate(e.created_at)}</span>
+                  </div>
+                  {e.signals ? <SignalChips signals={e.signals} /> : null}
+                  {e.reasons?.length ? <ReasonList reasons={e.reasons} tone={tone} /> : null}
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
-      <div className="mt-3 h-3 w-3/4 rounded bg-zinc-200 dark:bg-zinc-800" />
-      <div className="mt-2 h-3 w-1/2 rounded bg-zinc-200 dark:bg-zinc-800" />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
 import { formatMoney } from "@/app/lib/invoice";
+import { Money } from "@/app/components/ui/primitives";
 import { ProofUploadForm } from "@/app/components/ProofUploadForm";
 
 export default async function ProofUploadPage({
@@ -16,46 +17,49 @@ export default async function ProofUploadPage({
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from("invoices")
-    .select("id,invoice_no,amount,currency,status,payment_method")
-    .eq("id", id)
-    .maybeSingle();
-
+    .select("id,invoice_no,amount,currency,status,payment_method,client_name")
+    .eq("id", id).maybeSingle();
   if (!data) notFound();
 
-  const stillPending = data.status === "PENDING";
+  const stillPending = data.status === "PENDING" || data.status === "AWAITING_TRANSFER";
   const isBankTransfer = data.payment_method === "BANK_TRANSFER";
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-6 py-10">
-      <p className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        Invoice {data.invoice_no}
-      </p>
-      <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-        Upload payment proof
-      </h1>
-      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        {formatMoney(Number(data.amount), data.currency)}
-        {isBankTransfer
-          ? " — required for bank transfers so we can match it to your DBS notification email."
-          : " — optional, but helps us reconcile faster."}
-      </p>
-
-      {paid === "1" && stillPending ? (
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          Stripe confirmed your payment — we&apos;re still finalizing the ledger
-          entry. You can upload now; it&apos;ll be matched once reconciliation
-          completes.
+    <div className="cl-pay-wrap">
+      <div className="cl-pay-card" style={{ width: 560 }}>
+        <div className="cl-row-between" style={{ padding: "18px 22px", borderBottom: "1px solid var(--cl-border)" }}>
+          <div className="cl-row-gap">
+            <span className="cl-brand-mark">CL</span>
+            <div className="cl-stack" style={{ lineHeight: 1.2 }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{data.client_name}</span>
+              <span className="cl-subtle" style={{ fontSize: 11 }}>Invoice <span className="cl-mono">{data.invoice_no}</span></span>
+            </div>
+          </div>
+          <div className="cl-mono" style={{ fontSize: 13, color: "var(--cl-fg-muted)" }}>
+            <Money amount={Number(data.amount)} currency={data.currency} />
+          </div>
         </div>
-      ) : null}
-      {paid === "1" && !stillPending ? (
-        <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
-          Payment received. Upload a screenshot or PDF of your bank transfer
-          confirmation to help us match it.
-        </div>
-      ) : null}
 
-      <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <ProofUploadForm invoiceId={data.id} allowSkip={!isBankTransfer} />
+        <div style={{ padding: "22px" }}>
+          <h1 className="cl-h1" style={{ fontSize: 18, marginBottom: 6 }}>Upload payment proof</h1>
+          <p className="cl-subtle" style={{ fontSize: 13, marginBottom: 18 }}>
+            {formatMoney(Number(data.amount), data.currency)}
+            {isBankTransfer
+              ? " — required so we can match it to your bank notification email."
+              : " — optional, but helps us reconcile faster."}
+          </p>
+
+          {paid === "1" && stillPending ? (
+            <div className="cl-pill is-amber" style={{ marginBottom: 16 }}>
+              Stripe confirmed your payment — still finalizing.
+            </div>
+          ) : null}
+          {paid === "1" && !stillPending ? (
+            <div className="cl-pill is-emerald" style={{ marginBottom: 16 }}>Payment received.</div>
+          ) : null}
+
+          <ProofUploadForm invoiceId={data.id} allowSkip={!isBankTransfer} />
+        </div>
       </div>
     </div>
   );

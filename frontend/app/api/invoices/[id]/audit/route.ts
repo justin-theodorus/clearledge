@@ -14,7 +14,7 @@ export async function GET(
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("audit_logs")
-    .select("id,status,confidence,summary,reasons,capped,created_at")
+    .select("id,status,confidence,summary,reasons,capped,signals,created_at")
     .eq("invoice_id", id)
     .order("created_at", { ascending: false });
   if (error) {

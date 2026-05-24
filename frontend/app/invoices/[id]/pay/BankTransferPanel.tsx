@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Upload } from "lucide-react";
 import { formatMoney } from "@/app/lib/invoice";
+import { Flag, clsx } from "@/app/components/ui/primitives";
 import type { RegionCode } from "@/app/lib/regions";
 
 export type BankTransferQuote = {
@@ -40,109 +42,76 @@ export function BankTransferPanel({
     quotes[0]?.region ??
     ("SG" as RegionCode);
   const [region, setRegion] = useState<RegionCode>(defaultRegion);
-
   const quote = quotes.find((q) => q.region === region) ?? quotes[0];
-  const sameCurrency =
-    quote && quote.currency === invoiceCurrency.toUpperCase();
+  const sameCurrency = quote && quote.currency === invoiceCurrency.toUpperCase();
   const unavailable = quote && quote.amount === null;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="cl-stack-4">
       <div>
-        <h2 className="text-base font-semibold">Transfer to this account</h2>
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Pick the currency you want to send. The SME&apos;s {accountCurrency}{" "}
-          account receives the funds; your bank handles the conversion.
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="bt_region"
-          className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
-        >
-          Pay in
-        </label>
-        <select
-          id="bt_region"
-          value={region}
-          onChange={(e) => setRegion(e.target.value as RegionCode)}
-          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
-        >
+        <div className="cl-h3" style={{ marginBottom: 8 }}>Pay in</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
           {quotes.map((q) => (
-            <option key={q.region} value={q.region}>
-              {q.label} ({q.currency})
-            </option>
+            <button
+              key={q.region}
+              type="button"
+              onClick={() => setRegion(q.region)}
+              className={clsx("cl-pay-method", region === q.region && "is-active")}
+              style={{ flexDirection: "column", padding: "10px 6px", gap: 6, justifyContent: "center" }}
+            >
+              <Flag code={q.region} />
+              <span style={{ fontSize: 11, fontWeight: 500 }}>{q.currency}</span>
+            </button>
           ))}
-        </select>
+        </div>
         {unavailable ? (
-          <p className="text-xs text-red-600 dark:text-red-400">
-            FX rate unavailable for this currency — try another or refresh later.
+          <p style={{ color: "var(--cl-rose)", fontSize: 11, marginTop: 8 }}>
+            FX unavailable — try another currency.
           </p>
         ) : sameCurrency ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Same as invoice currency — no conversion needed.
-          </p>
-        ) : quote && quote.rate ? (
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            1 {invoiceCurrency.toUpperCase()} = {quote.rate.toFixed(4)}{" "}
-            {quote.currency} · mid-market rate on {quote.rateDate}
+          <p className="cl-subtle" style={{ fontSize: 11, marginTop: 8 }}>Same as invoice currency — no conversion.</p>
+        ) : quote?.rate ? (
+          <p className="cl-subtle" style={{ fontSize: 11, marginTop: 8 }}>
+            1 {invoiceCurrency.toUpperCase()} = {quote.rate.toFixed(4)} {quote.currency} · mid-market on {quote.rateDate}
           </p>
         ) : null}
       </div>
 
-      <dl className="grid grid-cols-1 gap-3 rounded-md border border-zinc-200 p-4 text-sm dark:border-zinc-800">
-        <Row label="Bank" value={bankName} />
-        <Row
-          label="Account number"
-          value={accountNumber || "(not configured)"}
-          mono
-        />
-        <Row
-          label="Amount to transfer"
-          value={
-            quote && quote.amount !== null
-              ? formatMoney(quote.amount, quote.currency)
-              : "—"
-          }
-        />
-        <Row
-          label="Invoice total"
-          value={formatMoney(invoiceAmount, invoiceCurrency)}
-        />
-        <Row label="Reference" value={invoiceNo} mono />
-      </dl>
+      <div className="cl-card" style={{ border: "1px solid var(--cl-border)" }}>
+        <div className="cl-card-row cl-row-between">
+          <span className="cl-h3" style={{ textTransform: "none" }}>Bank</span>
+          <span style={{ fontSize: 13 }}>{bankName}</span>
+        </div>
+        <div className="cl-card-row cl-row-between">
+          <span className="cl-h3" style={{ textTransform: "none" }}>Account ({accountCurrency})</span>
+          <span className="cl-mono" style={{ fontSize: 13 }}>{accountNumber || "(not configured)"}</span>
+        </div>
+        <div className="cl-card-row cl-row-between">
+          <span className="cl-h3" style={{ textTransform: "none" }}>Amount to transfer</span>
+          <span className="cl-mono" style={{ fontSize: 13, color: "var(--cl-fg)" }}>
+            {quote && quote.amount !== null ? formatMoney(quote.amount, quote.currency) : "—"}
+          </span>
+        </div>
+        <div className="cl-card-row cl-row-between">
+          <span className="cl-h3" style={{ textTransform: "none" }}>Invoice total</span>
+          <span className="cl-mono" style={{ fontSize: 12, color: "var(--cl-fg-muted)" }}>
+            {formatMoney(invoiceAmount, invoiceCurrency)}
+          </span>
+        </div>
+        <div className="cl-card-row cl-row-between">
+          <span className="cl-h3" style={{ textTransform: "none" }}>Reference</span>
+          <span className="cl-mono" style={{ fontSize: 13 }}>{invoiceNo}</span>
+        </div>
+      </div>
 
-      <Link
-        href={`/invoices/${invoiceId}/proof`}
-        className="rounded-full bg-zinc-900 px-5 py-2 text-center text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-      >
-        I have completed the transfer — upload proof
+      <Link href={`/invoices/${invoiceId}/proof`} className="cl-btn is-primary is-block is-lg">
+        <Upload size={14} /> Transfer complete — upload proof
       </Link>
 
-      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-        ClearLedge will cross-check the transfer against the SME&apos;s bank
-        notification email before marking the invoice paid.
+      <p className="cl-subtle" style={{ fontSize: 11, lineHeight: 1.5 }}>
+        ClearLedge cross-checks your transfer against the SME&apos;s bank notification
+        email before marking the invoice paid.
       </p>
-    </div>
-  );
-}
-
-function Row({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <dt className="text-xs text-zinc-500 dark:text-zinc-400">{label}</dt>
-      <dd className={mono ? "font-mono text-sm" : "text-sm font-medium"}>
-        {value}
-      </dd>
     </div>
   );
 }

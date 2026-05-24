@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { REGIONS, RegionCode } from "@/app/lib/regions";
+import { Flag, clsx } from "@/app/components/ui/primitives";
+
+const REGION_ORDER: RegionCode[] = ["SG", "US", "TH", "MY"];
 
 export function RegionPicker({
   invoiceId,
@@ -11,6 +14,7 @@ export function RegionPicker({
   defaultRegion?: RegionCode;
 }) {
   const [region, setRegion] = useState<RegionCode>(defaultRegion);
+  const [method, setMethod] = useState<string>(REGIONS[defaultRegion].methods[0]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,56 +34,61 @@ export function RegionPicker({
         return;
       }
       window.location.assign(json.url);
-    } catch (e) {
-      console.error(e);
+    } catch {
       setError("Network error — try again");
       setSubmitting(false);
     }
   }
 
-  const presentment = REGIONS[region].currency;
-  const methods = REGIONS[region].methods.join(", ");
+  function pickRegion(r: RegionCode) {
+    setRegion(r);
+    setMethod(REGIONS[r].methods[0]);
+  }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="region"
-          className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
-        >
-          Pay from
-        </label>
-        <select
-          id="region"
-          value={region}
-          onChange={(e) => setRegion(e.target.value as RegionCode)}
-          disabled={submitting}
-          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-50"
-        >
-          {(Object.keys(REGIONS) as RegionCode[]).map((code) => (
-            <option key={code} value={code}>
-              {REGIONS[code].label} ({REGIONS[code].currency})
-            </option>
+    <div className="cl-stack-4">
+      <div>
+        <div className="cl-h3" style={{ marginBottom: 8 }}>Pay from</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+          {REGION_ORDER.map((code) => (
+            <button
+              key={code}
+              type="button"
+              onClick={() => pickRegion(code)}
+              className={clsx("cl-pay-method", region === code && "is-active")}
+              style={{ flexDirection: "column", padding: "10px 6px", gap: 6, justifyContent: "center" }}
+            >
+              <Flag code={code} />
+              <span style={{ fontSize: 11, fontWeight: 500 }}>{REGIONS[code].currency}</span>
+            </button>
           ))}
-        </select>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">
-          Charged in {presentment} · Methods: {methods}
+        </div>
+        <p className="cl-subtle" style={{ fontSize: 11, marginTop: 8 }}>
+          Charged in {REGIONS[region].currency} at today&apos;s mid-market rate.
         </p>
       </div>
 
-      {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {error}
+      <div>
+        <div className="cl-h3" style={{ marginBottom: 8 }}>Method</div>
+        <div className="cl-stack-3">
+          {REGIONS[region].methods.map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMethod(m)}
+              className={clsx("cl-pay-method", method === m && "is-active")}
+            >
+              <span className="cl-pay-icon">{m.slice(0, 3).toUpperCase()}</span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 500, textTransform: "capitalize" }}>{m}</span>
+            </button>
+          ))}
         </div>
-      ) : null}
+      </div>
 
-      <button
-        type="button"
-        onClick={handlePay}
-        disabled={submitting}
-        className="rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-60 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-      >
-        {submitting ? "Redirecting…" : "Pay invoice"}
+      {error ? <div className="cl-pill is-rose">{error}</div> : null}
+
+      <button type="button" onClick={handlePay} disabled={submitting} className="cl-btn is-primary is-block is-lg">
+        {submitting ? "Redirecting…" : `Pay with ${method}`}
       </button>
     </div>
   );

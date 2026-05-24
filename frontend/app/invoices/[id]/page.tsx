@@ -1,11 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ChevronLeft, ExternalLink } from "lucide-react";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
 import { requireAdmin } from "@/app/lib/server/supabaseAuth";
 import { StatusBadge, InvoiceStatus } from "@/app/components/StatusBadge";
 import { AuditTrail, AuditEntry } from "@/app/components/AuditTrail";
+import { AuditWatcher } from "@/app/components/AuditWatcher";
+import { RingMeter, Money } from "@/app/components/ui/primitives";
+import { LivePipeline } from "@/app/components/Pipeline";
+import { pipelineFromAudit } from "@/app/components/pipelineFromAudit";
 import { formatDate, formatMoney } from "@/app/lib/invoice";
 import { CopyLinkButton } from "./CopyLinkButton";
+import { InvoiceTabs } from "./InvoiceTabs";
 
 type InvoiceRow = {
   id: string;
@@ -18,7 +24,27 @@ type InvoiceRow = {
   status: InvoiceStatus;
   stripe_session_id: string | null;
   payment_link: string | null;
+  payment_method: "STRIPE" | "BANK_TRANSFER";
   created_at: string;
+};
+
+type TxnRow = {
+  amount_received: number;
+  currency_received: string;
+  amount_converted: number | null;
+  fx_rate: number | null;
+  fx_timestamp: string | null;
+  stripe_payment_intent: string | null;
+  paid_at: string;
+};
+
+type ProofRow = {
+  id: string;
+  proof_url: string;
+  extracted_data: Record<string, unknown> | null;
+  match_confidence: number | null;
+  match_status: string | null;
+  uploaded_at: string;
 };
 
 export default async function InvoiceDetailPage({
@@ -26,175 +52,148 @@ export default async function InvoiceDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ paid?: string; reconciling?: string }>;
+  searchParams: Promise<{ paid?: string; tab?: string }>;
 }) {
   await requireAdmin();
   const { id } = await params;
-  const { paid, reconciling } = await searchParams;
+  const { paid, tab } = await searchParams;
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("invoices")
-    .select(
-      "id,invoice_no,client_name,client_email,amount,currency,due_date,status,stripe_session_id,payment_link,created_at",
-    )
+    .select("id,invoice_no,client_name,client_email,amount,currency,due_date,status,stripe_session_id,payment_link,payment_method,created_at")
     .eq("id", id)
     .maybeSingle();
-
-  if (error) {
-    console.error("[invoice detail] fetch failed", error);
-  }
+  if (error) console.error("[invoice detail] fetch failed", error);
   if (!data) notFound();
   const invoice = data as InvoiceRow;
 
-  const { data: proof } = await supabase
-    .from("proofs")
-    .select("proof_url, uploaded_at")
-    .eq("invoice_id", id)
-    .order("uploaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const proofIsImage = proof?.proof_url
-    ? /\.(png|jpe?g|gif|webp|heic|avif)(\?|$)/i.test(proof.proof_url)
-    : false;
+  const [proofRes, txnRes, auditRes] = await Promise.all([
+    supabase
+      .from("proofs")
+      .select("id,proof_url,extracted_data,match_confidence,match_status,uploaded_at")
+      .eq("invoice_id", id)
+      .order("uploaded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("transactions")
+      .select("amount_received,currency_received,amount_converted,fx_rate,fx_timestamp,stripe_payment_intent,paid_at")
+      .eq("invoice_id", id)
+      .order("paid_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("audit_logs")
+      .select("id,status,confidence,summary,reasons,capped,created_at,signals")
+      .eq("invoice_id", id)
+      .order("created_at", { ascending: false }),
+  ]);
 
-  const { data: auditData } = await supabase
-    .from("audit_logs")
-    .select("id,status,confidence,summary,reasons,capped,created_at")
-    .eq("invoice_id", id)
-    .order("created_at", { ascending: false });
-  const auditEntries = (auditData ?? []) as AuditEntry[];
+  const proof = (proofRes.data ?? null) as ProofRow | null;
+  const txn = (txnRes.data ?? null) as TxnRow | null;
+  const auditEntries = (auditRes.data ?? []) as (AuditEntry & { signals?: Record<string, unknown> })[];
+  const latestAudit = auditEntries[0] ?? null;
+
+  const pipelineStages = pipelineFromAudit(latestAudit, !!proof);
+  const confidence = latestAudit ? Number(latestAudit.confidence) : 0;
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-10">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            Invoice
-          </p>
-          <h1 className="mt-1 flex items-center gap-3 text-2xl font-semibold tracking-tight">
-            {invoice.invoice_no}
-            <StatusBadge status={invoice.status} />
-          </h1>
-        </div>
-        <Link
-          href="/invoices/new"
-          className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
-        >
-          + New invoice
+    <>
+      <AuditWatcher invoiceId={invoice.id} initialCount={auditEntries.length} />
+      <div className="cl-row-between" style={{ marginBottom: 16 }}>
+        <Link href="/invoices" className="cl-btn is-ghost is-sm">
+          <ChevronLeft size={14} /> Back to invoices
+        </Link>
+        <Link href={`/invoices/${invoice.id}/pay`} target="_blank" className="cl-btn is-sm">
+          <ExternalLink size={12} /> View pay page
         </Link>
       </div>
 
+      <div className="cl-page-head">
+        <div className="cl-page-title">
+          <div className="cl-row-gap" style={{ marginBottom: 4 }}>
+            <span className="cl-mono cl-h1" style={{ fontSize: 22 }}>{invoice.invoice_no}</span>
+            <StatusBadge status={invoice.status} large />
+          </div>
+          <p>{invoice.client_name} · {invoice.client_email}</p>
+        </div>
+      </div>
+
       {paid === "1" ? (
-        <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
-          {invoice.status === "PENDING"
-            ? "Payment confirmed by Stripe — reconciling…"
-            : "Payment received."}
+        <div className="cl-pill is-emerald" style={{ marginBottom: 16 }}>
+          {invoice.status === "PENDING" ? "Payment confirmed — reconciling…" : "Payment received."}
         </div>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-4 rounded-xl border border-zinc-200 bg-white p-4 text-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <Field label="Client" value={invoice.client_name} />
-        <Field
-          label="Amount"
-          value={formatMoney(Number(invoice.amount), invoice.currency)}
-        />
-        <Field
-          label="Due"
-          value={invoice.due_date ? formatDate(invoice.due_date) : "—"}
-        />
-        <Field label="Email" value={invoice.client_email} />
-        <Field label="Currency" value={invoice.currency} />
-        <Field label="Created" value={formatDate(invoice.created_at)} />
-      </div>
-
-      <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="text-base font-semibold">Payment link</h2>
-        {invoice.payment_link ? (
-          <>
-            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-              Stripe Checkout session for this invoice.
-            </p>
-            <div className="mt-3 flex items-center gap-2">
-              <code className="flex-1 truncate rounded-md bg-zinc-100 px-2 py-1.5 text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
-                {invoice.payment_link}
-              </code>
-              <CopyLinkButton value={invoice.payment_link} />
-              <a
-                href={invoice.payment_link}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-              >
-                Open
-              </a>
-            </div>
-          </>
-        ) : (
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            No payment link on file yet.
-          </p>
-        )}
-      </div>
-
-      <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">Proof of payment</h2>
-          <Link
-            href={`/invoices/${invoice.id}/proof`}
-            className="text-xs text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
-          >
-            {proof ? "Upload another" : "Upload"}
-          </Link>
-        </div>
-        {proof ? (
-          <div className="mt-3">
-            {proofIsImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={proof.proof_url}
-                alt="Payment proof"
-                className="max-h-64 rounded-md border border-zinc-200 object-contain dark:border-zinc-800"
-              />
-            ) : (
-              <a
-                href={proof.proof_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm underline"
-              >
-                Open proof file
-              </a>
-            )}
-            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-              Uploaded {formatDate(proof.uploaded_at)}
-            </p>
+      {/* Summary strip */}
+      <div
+        className="cl-card cl-card-pad"
+        style={{ marginBottom: 22, display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 24, alignItems: "center" }}
+      >
+        <div>
+          <div className="cl-h3" style={{ marginBottom: 6 }}>Invoiced</div>
+          <div className="cl-mono" style={{ fontSize: 22, color: "var(--cl-fg)" }}>
+            <Money amount={Number(invoice.amount)} currency={invoice.currency} />
           </div>
-        ) : (
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            No proof uploaded yet.
-          </p>
-        )}
+          <div className="cl-subtle" style={{ fontSize: 12, marginTop: 4 }}>
+            Due {invoice.due_date ? formatDate(invoice.due_date) : "—"}
+          </div>
+        </div>
+        <div className="cl-row-gap">
+          <RingMeter value={confidence} size={64} stroke={6} />
+          <div>
+            <div className="cl-h3" style={{ marginBottom: 4 }}>Match confidence</div>
+            <div className="cl-row-gap" style={{ gap: 8, flexWrap: "wrap" }}>
+              {latestAudit ? (
+                <StatusBadge status={latestAudit.status} />
+              ) : null}
+              <span className="cl-subtle" style={{ fontSize: 12 }}>
+                {latestAudit ? auditHeadline(latestAudit.status) : "Pipeline not yet run"}
+              </span>
+              {latestAudit?.capped ? (
+                <span className="cl-tag" style={{ color: "var(--cl-amber)" }}>Capped</span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div>
+          <div className="cl-h3" style={{ marginBottom: 6 }}>Agent pipeline</div>
+          <LivePipeline
+            target={pipelineStages}
+            runKey={latestAudit?.id ?? "empty"}
+            compact
+          />
+        </div>
       </div>
 
-      <AuditTrail
-        invoiceId={invoice.id}
-        initialEntries={auditEntries}
-        initialPending={reconciling === "1"}
+      <InvoiceTabs
+        defaultTab={tab ?? "overview"}
+        invoice={invoice}
+        proof={proof}
+        txn={txn}
+        latestAudit={latestAudit}
+        auditCount={auditEntries.length}
+        copyLinkButton={
+          invoice.payment_link ? <CopyLinkButton value={invoice.payment_link} /> : null
+        }
+        auditTrail={
+          <AuditTrail
+            invoiceId={invoice.id}
+            initialEntries={auditEntries}
+          />
+        }
       />
-    </div>
+    </>
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-        {label}
-      </p>
-      <p className="mt-1 font-medium text-zinc-900 dark:text-zinc-50">
-        {value}
-      </p>
-    </div>
-  );
+function auditHeadline(status: InvoiceStatus): string {
+  if (status === "RECONCILED") return "Auto-reconciled, all signals aligned";
+  if (status === "PARTIAL") return "Held for review";
+  if (status === "UNVERIFIED") return "Match rejected";
+  if (status === "ERROR") return "Pipeline error";
+  return "Awaiting reconciliation";
 }
+
+export { formatMoney };

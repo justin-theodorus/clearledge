@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { Plus, Activity } from "lucide-react";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
 import { requireAdmin } from "@/app/lib/server/supabaseAuth";
 import { StatusBadge, InvoiceStatus } from "@/app/components/StatusBadge";
-import { AuditTable, AuditTableRow } from "@/app/components/AuditTable";
-import { formatDate, formatMoney } from "@/app/lib/invoice";
+import { ConfBar, Money, StatCard } from "@/app/components/ui/primitives";
+import { formatDate } from "@/app/lib/invoice";
+import { SettlementChart, type StackedDay } from "./components/dashboard/SettlementChart";
+import { AgentActivityFeed, type FeedEntry } from "./components/dashboard/AgentActivityFeed";
 
 export const dynamic = "force-dynamic";
 
@@ -11,183 +14,257 @@ type InvoiceRow = {
   id: string;
   invoice_no: string;
   client_name: string;
+  client_email: string;
   amount: number;
   currency: string;
   status: InvoiceStatus;
   created_at: string;
+  due_date: string | null;
 };
 
-type Tab = "invoices" | "audit";
+type AuditRow = {
+  id: string;
+  invoice_id: string;
+  status: InvoiceStatus;
+  confidence: number;
+  summary: string;
+  created_at: string;
+  invoices: { invoice_no: string; client_name: string } | null;
+};
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string }>;
-}) {
+type TxnRow = {
+  amount_received: number;
+  currency_received: string;
+  fx_rate: number | null;
+  paid_at: string;
+  invoice_id: string;
+};
+
+export default async function DashboardPage() {
   await requireAdmin();
-  const { tab } = await searchParams;
-  const activeTab: Tab = tab === "audit" ? "audit" : "invoices";
   const supabase = getSupabaseAdmin();
 
-  let invoices: InvoiceRow[] = [];
-  let auditEntries: AuditTableRow[] = [];
-
-  if (activeTab === "invoices") {
-    const { data, error } = await supabase
+  const [invoicesRes, auditRes, txnRes] = await Promise.all([
+    supabase
       .from("invoices")
-      .select("id,invoice_no,client_name,amount,currency,status,created_at")
+      .select("id,invoice_no,client_name,client_email,amount,currency,status,created_at,due_date")
       .order("created_at", { ascending: false })
-      .limit(100);
-    if (error) console.error("[dashboard] invoices fetch failed", error);
-    invoices = (data ?? []) as InvoiceRow[];
-  } else {
-    const { data, error } = await supabase
+      .limit(100),
+    supabase
       .from("audit_logs")
-      .select(
-        "id,invoice_id,status,confidence,summary,created_at,invoices(invoice_no,client_name)",
-      )
+      .select("id,invoice_id,status,confidence,summary,created_at,invoices(invoice_no,client_name)")
       .order("created_at", { ascending: false })
-      .limit(100);
-    if (error) console.error("[dashboard] audit fetch failed", error);
-    auditEntries = (data ?? []) as unknown as AuditTableRow[];
+      .limit(8),
+    supabase
+      .from("transactions")
+      .select("amount_received,currency_received,fx_rate,paid_at,invoice_id")
+      .order("paid_at", { ascending: false })
+      .limit(200),
+  ]);
+
+  const invoices = (invoicesRes.data ?? []) as InvoiceRow[];
+  const audits = (auditRes.data ?? []) as unknown as AuditRow[];
+  const txns = (txnRes.data ?? []) as TxnRow[];
+
+  /* ─── Stats ─── */
+  const outstanding = invoices
+    .filter((i) => ["PENDING", "AWAITING_TRANSFER", "PAID"].includes(i.status))
+    .reduce((s, i) => s + Number(i.amount), 0);
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const reconciledToday = invoices.filter(
+    (i) => i.status === "RECONCILED" && i.created_at.slice(0, 10) >= todayKey,
+  ).length;
+
+  const pendingProofs = invoices.filter(
+    (i) => i.status === "AWAITING_TRANSFER" || i.status === "PAID",
+  ).length;
+
+  const fxExposure = txns.reduce((s, t) => {
+    if (t.fx_rate && t.fx_rate !== 1) return s + Number(t.amount_received);
+    return s;
+  }, 0);
+
+  /* ─── 30-day stacked chart ─── */
+  const byDay = new Map<string, StackedDay>();
+  const today = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    byDay.set(key, { date: key, reconciled: 0, partial: 0, unverified: 0 });
+  }
+  for (const i of invoices) {
+    const k = i.created_at.slice(0, 10);
+    const row = byDay.get(k);
+    if (!row) continue;
+    const amt = Number(i.amount);
+    if (i.status === "RECONCILED") row.reconciled += amt;
+    else if (i.status === "PARTIAL") row.partial += amt;
+    else if (i.status === "UNVERIFIED") row.unverified += amt;
+  }
+  const chart = Array.from(byDay.values());
+
+  /* ─── Sparklines (last 14 days invoice counts by category) ─── */
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
+  const sparkCount = (predicate: (i: InvoiceRow) => boolean): number[] => {
+    const arr = Array(14).fill(0);
+    for (const inv of invoices) {
+      if (!predicate(inv)) continue;
+      const days = Math.floor(
+        (nowMs - new Date(inv.created_at).getTime()) / 86400000,
+      );
+      if (days >= 0 && days < 14) arr[13 - days] += 1;
+    }
+    return arr;
+  };
+
+  const feed: FeedEntry[] = audits.map((a) => ({
+    id: a.id,
+    invoiceId: a.invoice_id,
+    invoiceNo: a.invoices?.invoice_no ?? a.invoice_id.slice(0, 8),
+    client: a.invoices?.client_name ?? "—",
+    status: a.status,
+    confidence: Number(a.confidence),
+    summary: a.summary,
+    createdAt: a.created_at,
+  }));
+
+  /* ─── Recent activity (7 rows) ─── */
+  const recent = invoices.slice(0, 7);
+
+  /* ─── Confidence map per invoice (for table) ─── */
+  const confByInvoice = new Map<string, number>();
+  for (const a of audits) {
+    if (!confByInvoice.has(a.invoice_id)) {
+      confByInvoice.set(a.invoice_id, Number(a.confidence));
+    }
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-10">
-      <div className="mb-6 flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Track invoices, payments, and reconciliation status.
-        </p>
+    <>
+      <div className="cl-page-head">
+        <div className="cl-page-title">
+          <h1 className="cl-h1">Good afternoon</h1>
+          <p>Treasury overview · {new Intl.DateTimeFormat("en-GB", { dateStyle: "full" }).format(new Date())}</p>
+        </div>
+        <div className="cl-page-actions">
+          <Link href="/invoices/new" className="cl-btn is-primary">
+            <Plus size={14} />
+            New invoice
+          </Link>
+        </div>
       </div>
 
-      <div className="border-b border-zinc-200 dark:border-zinc-800">
-        <nav className="-mb-px flex gap-6" aria-label="Tabs">
-          <TabLink href="/?tab=invoices" active={activeTab === "invoices"}>
-            Invoices
-          </TabLink>
-          <TabLink href="/?tab=audit" active={activeTab === "audit"}>
-            Audit
-          </TabLink>
-        </nav>
+      <div className="cl-stat-grid">
+        <StatCard
+          label="Outstanding"
+          currency="SGD"
+          value={outstanding.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+          delta={4.2}
+          deltaLabel="vs last week"
+          spark={sparkCount((i) => ["PENDING", "AWAITING_TRANSFER", "PAID"].includes(i.status))}
+        />
+        <StatCard
+          label="Reconciled today"
+          value={String(reconciledToday)}
+          deltaLabel={`of ${invoices.length} total`}
+          spark={sparkCount((i) => i.status === "RECONCILED")}
+        />
+        <StatCard
+          label="Pending proofs"
+          value={String(pendingProofs)}
+          deltaLabel="awaiting upload"
+          spark={sparkCount((i) => i.status === "AWAITING_TRANSFER" || i.status === "PAID")}
+        />
+        <StatCard
+          label="FX exposure"
+          currency="USD"
+          value={fxExposure.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+          delta={-1.1}
+          deltaLabel="cross-border txns"
+          spark={sparkCount((i) => i.status === "PARTIAL")}
+        />
       </div>
 
-      {activeTab === "invoices" ? (
-        <section className="mt-8">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-base font-semibold">All invoices</h2>
-            <Link
-              href="/invoices/new"
-              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-            >
-              Create invoice
-            </Link>
+      <div className="cl-grid-2" style={{ marginBottom: 22 }}>
+        <div className="cl-card">
+          <div className="cl-card-head">
+            <h2>
+              <Activity size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
+              Settlement volume · last 30 days
+            </h2>
+            <span className="cl-tag">
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--cl-emerald)" }} /> reconciled
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--cl-amber)", marginLeft: 8 }} /> partial
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--cl-rose)", marginLeft: 8 }} /> unverified
+            </span>
           </div>
+          <div className="cl-card-pad">
+            <SettlementChart data={chart} />
+          </div>
+        </div>
 
-          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-            <table className="min-w-full divide-y divide-zinc-200 dark:divide-zinc-800">
-              <thead className="bg-zinc-50 dark:bg-zinc-900">
-                <tr>
-                  <Th>Invoice #</Th>
-                  <Th>Client</Th>
-                  <Th>Amount</Th>
-                  <Th>Status</Th>
-                  <Th>Created</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                {invoices.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className="px-4 py-16 text-center text-sm text-zinc-500 dark:text-zinc-400"
-                    >
-                      No invoices yet.{" "}
-                      <Link
-                        href="/invoices/new"
-                        className="font-medium text-zinc-900 underline-offset-2 hover:underline dark:text-zinc-50"
-                      >
-                        Create your first invoice
+        <div className="cl-card">
+          <div className="cl-card-head">
+            <h2>Live agent activity</h2>
+            <span className="cl-tag" style={{ color: "var(--cl-emerald)" }}>
+              <span className="cl-pill-dot" style={{ background: "var(--cl-emerald)" }} /> live
+            </span>
+          </div>
+          <AgentActivityFeed initial={feed} />
+        </div>
+      </div>
+
+      <div className="cl-card">
+        <div className="cl-card-head">
+          <h2>Recent activity</h2>
+          <Link href="/invoices" className="cl-link" style={{ fontSize: 12 }}>
+            View all →
+          </Link>
+        </div>
+        <div className="cl-table-wrap" style={{ border: 0, borderRadius: 0 }}>
+          <table className="cl-table">
+            <thead>
+              <tr>
+                <th>Invoice #</th>
+                <th>Client</th>
+                <th>Amount</th>
+                <th>Status</th>
+                <th style={{ width: 140 }}>Confidence</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recent.length === 0 ? (
+                <tr><td colSpan={6} className="cl-empty">No invoices yet.</td></tr>
+              ) : recent.map((i) => {
+                const conf = confByInvoice.get(i.id);
+                return (
+                  <tr key={i.id} style={{ cursor: "pointer" }}>
+                    <td>
+                      <Link href={`/invoices/${i.id}`} className="cl-mono" style={{ color: "var(--cl-fg)" }}>
+                        {i.invoice_no}
                       </Link>
-                      .
                     </td>
+                    <td>
+                      <div className="cl-stack">
+                        <span>{i.client_name}</span>
+                        <span className="cl-subtle" style={{ fontSize: 11 }}>{i.client_email}</span>
+                      </div>
+                    </td>
+                    <td className="is-num"><Money amount={Number(i.amount)} currency={i.currency} /></td>
+                    <td><StatusBadge status={i.status} /></td>
+                    <td>{conf !== undefined ? <ConfBar value={conf} /> : <span className="cl-faint">—</span>}</td>
+                    <td className="cl-subtle">{formatDate(i.created_at)}</td>
                   </tr>
-                ) : (
-                  invoices.map((inv) => (
-                    <tr
-                      key={inv.id}
-                      className="hover:bg-zinc-50 dark:hover:bg-zinc-900"
-                    >
-                      <td className="px-4 py-3 text-sm font-medium">
-                        <Link
-                          href={`/invoices/${inv.id}`}
-                          className="text-zinc-900 hover:underline dark:text-zinc-50"
-                        >
-                          {inv.invoice_no}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
-                        {inv.client_name}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
-                        {formatMoney(Number(inv.amount), inv.currency)}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        <StatusBadge status={inv.status} />
-                      </td>
-                      <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
-                        {formatDate(inv.created_at)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ) : (
-        <section className="mt-8">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-base font-semibold">Audit trail</h2>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Append-only log of every Matcher decision.
-            </p>
-          </div>
-          <AuditTable entries={auditEntries} />
-        </section>
-      )}
-    </div>
-  );
-}
-
-function TabLink({
-  href,
-  active,
-  children,
-}: {
-  href: string;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  const base =
-    "border-b-2 px-1 pb-3 text-sm font-medium transition-colors";
-  const cls = active
-    ? "border-zinc-900 text-zinc-900 dark:border-zinc-50 dark:text-zinc-50"
-    : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50";
-  return (
-    <Link href={href} aria-current={active ? "page" : undefined} className={`${base} ${cls}`}>
-      {children}
-    </Link>
-  );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th
-      scope="col"
-      className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
-    >
-      {children}
-    </th>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   );
 }

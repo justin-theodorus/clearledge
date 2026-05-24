@@ -277,27 +277,52 @@ def _bank_transfer_match(invoice_id: str, fx: FxResult, extracted: dict) -> Matc
     status = _threshold(confidence)
 
     reasons: list[str] = []
-    reasons.append(f"BANK_TRANSFER path · gmail_status={gmail_status or 'NONE'}")
+    reasons.append("This is a bank-transfer invoice — we corroborate the payment against the bank notification email and any uploaded receipt.")
     if gmail_score is not None:
-        reasons.append(
-            f"Gmail signal: {gmail_score} (account={int(bool(checks.get('account_match')))} "
-            f"amount={int(bool(checks.get('amount_match')))} "
-            f"keyword={int(bool(checks.get('keyword_match')))} "
-            f"currency={int(bool(checks.get('currency_match')))})"
-        )
+        passed = [
+            label for label, key in (
+                ("matched the right bank account", "account_match"),
+                ("matched the expected amount", "amount_match"),
+                ("matched the invoice keyword", "keyword_match"),
+                ("matched the currency", "currency_match"),
+            ) if checks.get(key)
+        ]
+        failed = [
+            label for label, key in (
+                ("the bank account", "account_match"),
+                ("the amount", "amount_match"),
+                ("the invoice keyword", "keyword_match"),
+                ("the currency", "currency_match"),
+            ) if not checks.get(key)
+        ]
+        if passed and not failed:
+            reasons.append("Found a matching bank notification email — every check passed.")
+        elif passed:
+            reasons.append(
+                "Found a matching bank notification email — "
+                + ", ".join(passed)
+                + "; but did not match "
+                + ", ".join(failed)
+                + "."
+            )
+        else:
+            reasons.append("Found a bank notification email, but none of the expected fields matched.")
+    elif gmail_status == "NOT_FOUND":
+        reasons.append("No matching bank notification email was found in the inbox yet.")
     else:
-        reasons.append("No Gmail FOUND row — gmail signal absent")
+        reasons.append("Haven't searched the inbox for a bank notification email yet.")
     if proof_score is not None:
-        reasons.append(f"Proof composite score: {proof_score}")
-    if date_proximity_score is not None:
-        reasons.append(f"Proof/paid_at date score: {date_proximity_score}")
+        reasons.append(_phrase_proof_score(proof_score))
+    if date_proximity_score is not None and signals.date_diff_days is not None:
+        reasons.append(_phrase_date(signals.date_diff_days))
     if not gmail_present:
-        reasons.append(f"Capped at {BANK_NO_GMAIL_CAP} — no FOUND Gmail email")
+        reasons.append(
+            f"Without a confirmed bank notification email, confidence is capped at {BANK_NO_GMAIL_CAP}."
+        )
     if not fx.proof_present:
-        reasons.append(f"Capped at {BANK_NO_PROOF_CAP} — no proof uploaded")
-    if capped:
-        reasons.append("Cap applied")
-    reasons.append(f"Final status: {status}")
+        reasons.append(
+            f"Without an uploaded receipt, confidence is capped at {BANK_NO_PROOF_CAP}."
+        )
 
     if fx.proof_present:
         update_proof_match(invoice_id, status, confidence)
@@ -374,6 +399,60 @@ def match(invoice_id: str) -> MatchResult:
     )
 
 
+def _phrase_proof_score(score: Decimal) -> str:
+    s = float(score)
+    if s >= 0.85:
+        return f"The uploaded receipt strongly corroborates the payment (score {score})."
+    if s >= 0.60:
+        return f"The uploaded receipt partially corroborates the payment (score {score})."
+    if s > 0:
+        return f"The uploaded receipt doesn't line up well with the payment (score {score})."
+    return "The uploaded receipt didn't contribute any usable signals."
+
+
+def _phrase_amount(diff_ratio: Decimal) -> str:
+    pct = (diff_ratio * 100).quantize(Decimal("0.01"))
+    if pct == Decimal("0.00"):
+        return "Amount on the receipt matches the bank credit exactly."
+    if pct < Decimal("0.50"):
+        return f"Amount on the receipt is within {pct}% of the bank credit — well inside tolerance."
+    if pct < Decimal("2.00"):
+        return f"Amount on the receipt differs from the bank credit by {pct}% — inside the ±2% tolerance."
+    if pct < Decimal("5.00"):
+        return f"Amount on the receipt is off by {pct}% — outside the ±2% tolerance but still scoring partially."
+    return f"Amount on the receipt is off by {pct}% — outside tolerance, scoring zero."
+
+
+def _phrase_date(days: int) -> str:
+    if days == 0:
+        return "Receipt is dated the same day as the bank credit."
+    if days == 1:
+        return "Receipt is dated 1 day from the bank credit."
+    return f"Receipt is dated {days} days from the bank credit."
+
+
+def _phrase_sender(score: Decimal) -> str:
+    s = float(score)
+    if s >= 0.90:
+        return f"Sender name on the receipt is a near-exact match to the client ({score})."
+    if s >= 0.60:
+        return f"Sender name on the receipt mostly matches the client ({score})."
+    if s > 0:
+        return f"Sender name on the receipt does not look like the client ({score})."
+    return "No sender name found on the receipt."
+
+
+def _phrase_reference(score: Decimal) -> str:
+    s = float(score)
+    if s >= 0.99:
+        return "Receipt reference includes the invoice number."
+    if s >= 0.50:
+        return f"Receipt reference partially matches the invoice number ({score})."
+    if s > 0:
+        return f"Receipt reference does not match the invoice number ({score})."
+    return "No reference found on the receipt."
+
+
 def _build_reasons(
     fx: FxResult,
     signals: MatchSignals,
@@ -381,23 +460,28 @@ def _build_reasons(
     capped: bool,
     status: Status,
 ) -> list[str]:
+    del status  # status is shown alongside the reasons; no need to repeat it.
     out: list[str] = []
     if signals.amount_diff_ratio is not None:
-        pct = (signals.amount_diff_ratio * 100).quantize(Decimal("0.01"))
-        out.append(f"Amount diff vs txn: {pct}% (worst of available legs)")
+        out.append(_phrase_amount(signals.amount_diff_ratio))
     if signals.date_diff_days is not None:
-        out.append(f"Proof date is {signals.date_diff_days} day(s) from paid_at")
+        out.append(_phrase_date(signals.date_diff_days))
     if signals.sender_score is not None:
-        out.append(f"Sender fuzzy match score: {signals.sender_score}")
+        out.append(_phrase_sender(signals.sender_score))
     if signals.reference_score is not None:
-        out.append(f"Reference match score: {signals.reference_score}")
+        out.append(_phrase_reference(signals.reference_score))
     if not fx.proof_present:
-        out.append("No proof uploaded — confidence capped at 0.85 (max PARTIAL)")
+        out.append(
+            "No payment receipt uploaded yet — confidence is capped at 0.85, "
+            "so this invoice can't auto-reconcile."
+        )
     elif not proof_usable:
-        out.append("Proof present but OCR currency unresolved — confidence capped at 0.85")
-    if capped:
-        out.append("Cap applied")
-    out.append(f"Final status: {status}")
+        out.append(
+            "Couldn't read a clear currency from the receipt — confidence is capped at 0.85 "
+            "until the receipt can be re-read."
+        )
+    elif capped:
+        out.append("A safety cap was applied because one of the key signals was missing.")
     return out
 
 

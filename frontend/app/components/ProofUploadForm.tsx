@@ -2,6 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Upload, FileImage } from "lucide-react";
+import { Pipeline, usePipelineSim } from "./Pipeline";
+import { clsx } from "./ui/primitives";
 
 export function ProofUploadForm({
   invoiceId,
@@ -12,87 +15,111 @@ export function ProofUploadForm({
 }) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!file) {
-      setError("Please choose a file.");
-      return;
-    }
+  async function upload(f: File) {
     setSubmitting(true);
     setError(null);
     try {
       const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`/api/invoices/${invoiceId}/proof`, {
-        method: "POST",
-        body: fd,
-      });
+      fd.append("file", f);
+      const res = await fetch(`/api/invoices/${invoiceId}/proof`, { method: "POST", body: fd });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error || "Upload failed");
       }
-      router.push(`/invoices/${invoiceId}?reconciling=1`);
-      router.refresh();
+      router.push(`/invoices/${invoiceId}/done`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
       setSubmitting(false);
     }
   }
 
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!file) { setError("Please choose a file."); return; }
+    await upload(file);
+  }
+
   async function onSkip() {
     setSkipping(true);
     setError(null);
     try {
-      const res = await fetch(`/api/invoices/${invoiceId}/skip-proof`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/invoices/${invoiceId}/skip-proof`, { method: "POST" });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error || "Skip failed");
       }
-      router.push(`/invoices/${invoiceId}?reconciling=1`);
-      router.refresh();
+      router.push(`/invoices/${invoiceId}/done`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Skip failed");
       setSkipping(false);
     }
   }
 
+  if (submitting) {
+    return <ProofUploadingState />;
+  }
+
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-3">
-      <input
-        type="file"
-        accept="image/*,application/pdf"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        disabled={submitting}
-        className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-zinc-900 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-zinc-700 dark:file:bg-zinc-50 dark:file:text-black dark:hover:file:bg-zinc-300"
-      />
-      {error ? (
-        <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
-      ) : null}
-      <div className="flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={!file || submitting || skipping}
-          className="rounded-md bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50 hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-        >
-          {submitting ? "Uploading…" : "Upload proof"}
-        </button>
+    <form onSubmit={onSubmit} className="cl-stack-4">
+      <label
+        className={clsx("cl-drop", dragging && "is-over")}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) setFile(f);
+        }}
+      >
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          style={{ display: "none" }}
+        />
+        <div className="cl-drop-icon">
+          {file ? <FileImage size={22} /> : <Upload size={22} />}
+        </div>
+        <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--cl-fg)" }}>
+          {file ? file.name : "Drop a screenshot or PDF here"}
+        </div>
+        <div className="cl-subtle" style={{ fontSize: 11.5, marginTop: 4 }}>
+          {file ? `${(file.size / 1024).toFixed(1)} KB` : "or click to browse · max 10MB"}
+        </div>
+      </label>
+
+      {error ? <div className="cl-pill is-rose">{error}</div> : null}
+
+      <div className="cl-row-between">
         {allowSkip ? (
-          <button
-            type="button"
-            onClick={onSkip}
-            disabled={submitting || skipping}
-            className="text-sm text-zinc-600 underline-offset-2 hover:underline hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-50"
-          >
-            {skipping ? "Skipping…" : "Skip for now →"}
+          <button type="button" onClick={onSkip} disabled={skipping || submitting} className="cl-btn is-ghost">
+            {skipping ? "Skipping…" : "Skip for now"}
           </button>
-        ) : null}
+        ) : <span />}
+        <button type="submit" disabled={!file || submitting || skipping} className="cl-btn is-primary">
+          <Upload size={13} /> Upload proof
+        </button>
       </div>
     </form>
+  );
+}
+
+function ProofUploadingState() {
+  const stages = usePipelineSim({ msPerStage: 900 });
+  return (
+    <div className="cl-stack-4 cl-fade-in">
+      <div className="cl-drop" style={{ padding: 28 }}>
+        <span className="cl-spin" style={{ color: "var(--cl-primary-400)" }} />
+        <div style={{ marginTop: 12, fontSize: 13.5, fontWeight: 500 }}>Uploading & extracting…</div>
+        <div className="cl-subtle" style={{ fontSize: 11.5, marginTop: 4 }}>Our agents are reading the receipt.</div>
+      </div>
+      <Pipeline stages={stages} compact />
+    </div>
   );
 }

@@ -1,24 +1,27 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { getCurrentUser } from "./lib/server/supabaseAuth";
-import { SignOutButton } from "./components/SignOutButton";
+import { Shell } from "./components/shell/Shell";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "ClearLedge",
+  title: "ClearLedge — Treasury Reconciliation",
   description: "AI-powered treasury reconciliation for cross-border SMEs.",
 };
+
+const themeBootstrap = `(function(){try{var t=localStorage.getItem('cl-theme');if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(_){document.documentElement.setAttribute('data-theme','dark');}})();`;
 
 export default async function RootLayout({
   children,
@@ -30,37 +33,17 @@ export default async function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      data-theme="dark"
+      suppressHydrationWarning
+      className={`${inter.variable} ${jetbrainsMono.variable}`}
     >
-      <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-black dark:text-zinc-50">
-        <header className="border-b border-zinc-200 bg-white dark:border-zinc-800 dark:bg-black">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-            <Link
-              href={user ? "/" : "/login"}
-              className="text-lg font-semibold tracking-tight"
-            >
-              ClearLedge
-            </Link>
-            {user ? (
-              <div className="flex items-center gap-4">
-                <Link
-                  href="/settings"
-                  className="text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
-                >
-                  Settings
-                </Link>
-                <Link
-                  href="/invoices/new"
-                  className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-                >
-                  New invoice
-                </Link>
-                <SignOutButton />
-              </div>
-            ) : null}
-          </div>
-        </header>
-        <main className="flex flex-1 flex-col">{children}</main>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
+      <body>
+        <Shell user={user ? { email: user.email ?? null } : null}>
+          {children}
+        </Shell>
       </body>
     </html>
   );
