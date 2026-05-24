@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
+import { requireAdminApi } from "@/app/lib/server/supabaseAuth";
 import { sendPaymentLinkEmail } from "@/app/lib/server/resend";
 import { InvoiceData } from "@/app/lib/invoice";
 
@@ -40,6 +41,9 @@ function validate(body: unknown): Body | string {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireAdminApi();
+  if (!auth.ok) return auth.response;
+
   let json: unknown;
   try {
     json = await req.json();

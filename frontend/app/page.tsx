@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
+import { requireAdmin } from "@/app/lib/server/supabaseAuth";
 import { StatusBadge, InvoiceStatus } from "@/app/components/StatusBadge";
 import { AuditTable, AuditTableRow } from "@/app/components/AuditTable";
 import { formatDate, formatMoney } from "@/app/lib/invoice";
@@ -23,6 +24,7 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ tab?: string }>;
 }) {
+  await requireAdmin();
   const { tab } = await searchParams;
   const activeTab: Tab = tab === "audit" ? "audit" : "invoices";
   const supabase = getSupabaseAdmin();

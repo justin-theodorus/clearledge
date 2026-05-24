@@ -1,6 +1,8 @@
 import { InvoiceForm } from "@/app/components/InvoiceForm";
+import { requireAdmin } from "@/app/lib/server/supabaseAuth";
 
-export default function NewInvoicePage() {
+export default async function NewInvoicePage() {
+  await requireAdmin();
   return (
     <div className="mx-auto w-full max-w-2xl px-6 py-10">
       <div className="mb-6">

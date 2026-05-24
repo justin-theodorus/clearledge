@@ -1,4 +1,5 @@
 import { loadRefreshToken } from "@/app/lib/server/gmailTokens";
+import { requireAdmin } from "@/app/lib/server/supabaseAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ export default async function SettingsPage({
 }: {
   searchParams: SearchParams;
 }) {
+  await requireAdmin();
   const params = await searchParams;
   const token = await loadRefreshToken().catch(() => null);
   const connected = Boolean(token);

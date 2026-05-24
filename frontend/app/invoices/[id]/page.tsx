@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
+import { requireAdmin } from "@/app/lib/server/supabaseAuth";
 import { StatusBadge, InvoiceStatus } from "@/app/components/StatusBadge";
 import { AuditTrail, AuditEntry } from "@/app/components/AuditTrail";
 import { formatDate, formatMoney } from "@/app/lib/invoice";
@@ -27,6 +28,7 @@ export default async function InvoiceDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ paid?: string; reconciling?: string }>;
 }) {
+  await requireAdmin();
   const { id } = await params;
   const { paid, reconciling } = await searchParams;
 
