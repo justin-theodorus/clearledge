@@ -55,6 +55,21 @@ export default async function InvoiceDetailPage({
     ? /\.(png|jpe?g|gif|webp|heic|avif)(\?|$)/i.test(proof.proof_url)
     : false;
 
+  const { data: auditData } = await supabase
+    .from("audit_logs")
+    .select("id,status,confidence,summary,reasons,capped,created_at")
+    .eq("invoice_id", id)
+    .order("created_at", { ascending: false });
+  const auditEntries = (auditData ?? []) as Array<{
+    id: string;
+    status: InvoiceStatus;
+    confidence: number;
+    summary: string;
+    reasons: string[];
+    capped: boolean;
+    created_at: string;
+  }>;
+
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-10">
       <div className="mb-6 flex items-center justify-between">
@@ -164,6 +179,59 @@ export default async function InvoiceDetailPage({
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
             No proof uploaded yet.
           </p>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+        <h2 className="text-base font-semibold">Audit trail</h2>
+        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          Every Matcher decision recorded for this invoice.
+        </p>
+        {auditEntries.length === 0 ? (
+          <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+            No matcher runs yet.
+          </p>
+        ) : (
+          <ul className="mt-4 space-y-3">
+            {auditEntries.map((entry) => (
+              <li
+                key={entry.id}
+                className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={entry.status} />
+                    <span className="text-sm tabular-nums text-zinc-700 dark:text-zinc-300">
+                      {Number(entry.confidence).toFixed(3)}
+                    </span>
+                    {entry.capped ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                        Capped
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                    {formatDate(entry.created_at)}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  {entry.summary}
+                </p>
+                {entry.reasons?.length ? (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50">
+                      Reasons ({entry.reasons.length})
+                    </summary>
+                    <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-zinc-600 dark:text-zinc-400">
+                      {entry.reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

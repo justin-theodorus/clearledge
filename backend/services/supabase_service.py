@@ -95,7 +95,7 @@ def get_latest_proof_extracted(invoice_id: str) -> Optional[dict]:
     return rows[0].get("extracted_data")
 
 
-def _latest_proof_id(invoice_id: str) -> Optional[str]:
+def get_latest_proof_id(invoice_id: str) -> Optional[str]:
     client = get_supabase()
     res = (
         client.table("proofs")
@@ -110,7 +110,7 @@ def _latest_proof_id(invoice_id: str) -> Optional[str]:
 
 
 def update_proof_match(invoice_id: str, status: str, confidence: Decimal) -> None:
-    proof_id = _latest_proof_id(invoice_id)
+    proof_id = get_latest_proof_id(invoice_id)
     if not proof_id:
         raise ProofNotFoundError(f"No proof found for invoice_id={invoice_id}")
     client = get_supabase()
@@ -122,3 +122,10 @@ def update_proof_match(invoice_id: str, status: str, confidence: Decimal) -> Non
 def update_invoice_status(invoice_id: str, status: str) -> None:
     client = get_supabase()
     client.table("invoices").update({"status": status}).eq("id", invoice_id).execute()
+
+
+def insert_audit_log(payload: dict) -> dict:
+    client = get_supabase()
+    res = client.table("audit_logs").insert(payload).execute()
+    rows = res.data or []
+    return rows[0] if rows else {}
