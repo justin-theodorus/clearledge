@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/logo/default-with-text.png" alt="ClearLedge" width="420" />
+  <img src="frontend/public/logo/standalone-removebg-preview.png" alt="ClearLedge" width="420" />
 </p>
 
 # ClearLedge
