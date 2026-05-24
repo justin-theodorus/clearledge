@@ -5,36 +5,6 @@ import { getSupabaseAdmin } from "@/app/lib/server/supabase";
 
 export const runtime = "nodejs";
 
-type FrankfurterResponse = {
-  amount: number;
-  base: string;
-  date: string;
-  rates: Record<string, number>;
-};
-
-async function fetchFxRate(
-  from: string,
-  to: string,
-  at: Date,
-): Promise<{ rate: number; date: string } | null> {
-  if (from.toUpperCase() === to.toUpperCase()) {
-    return { rate: 1, date: at.toISOString().slice(0, 10) };
-  }
-  const day = at.toISOString().slice(0, 10);
-  const url = `https://api.frankfurter.dev/v1/${day}?base=${from.toUpperCase()}&symbols=${to.toUpperCase()}`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const json = (await res.json()) as FrankfurterResponse;
-    const rate = json.rates?.[to.toUpperCase()];
-    if (typeof rate !== "number") return null;
-    return { rate, date: json.date };
-  } catch (e) {
-    console.error("[webhook] frankfurter failed", e);
-    return null;
-  }
-}
-
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const supabase = getSupabaseAdmin();
   const invoiceId = session.metadata?.invoice_id;
@@ -45,7 +15,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
   const { data: invoice, error: fetchErr } = await supabase
     .from("invoices")
-    .select("id, currency, amount")
+    .select("id")
     .eq("id", invoiceId)
     .single();
 
@@ -54,25 +24,55 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  const amountReceivedMinor = session.amount_total ?? 0;
-  const currencyReceived = (session.currency ?? invoice.currency).toUpperCase();
-  const amountReceived = amountReceivedMinor / 100;
-  const paidAt = new Date();
+  const piId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id;
+  if (!piId) {
+    console.error("[webhook] no payment_intent on session", session.id);
+    return;
+  }
 
-  const fx = await fetchFxRate(currencyReceived, invoice.currency, paidAt);
-  const amountConverted = fx ? +(amountReceived * fx.rate).toFixed(2) : null;
+  const stripe = getStripe();
+  let amountReceived: number;
+  let currencyReceived: string;
+  let fxRate: number | null = null;
+  let fxTimestamp: string | null = null;
+  let paidAt = new Date();
+
+  try {
+    const pi = await stripe.paymentIntents.retrieve(piId, {
+      expand: ["latest_charge.balance_transaction"],
+    });
+    const charge = pi.latest_charge as Stripe.Charge | null;
+    const bt = charge?.balance_transaction as Stripe.BalanceTransaction | null;
+    if (!bt) {
+      console.error(
+        "[webhook] missing balance_transaction; falling back to session amounts",
+        session.id,
+      );
+      amountReceived = (session.amount_total ?? 0) / 100;
+      currencyReceived = (session.currency ?? "").toUpperCase();
+    } else {
+      amountReceived = bt.amount / 100;
+      currencyReceived = bt.currency.toUpperCase();
+      fxRate = typeof bt.exchange_rate === "number" ? bt.exchange_rate : null;
+      fxTimestamp = new Date(bt.created * 1000).toISOString();
+      paidAt = new Date(bt.created * 1000);
+    }
+  } catch (e) {
+    console.error("[webhook] payment_intent retrieve failed", e);
+    amountReceived = (session.amount_total ?? 0) / 100;
+    currencyReceived = (session.currency ?? "").toUpperCase();
+  }
 
   const { error: txErr } = await supabase.from("transactions").insert({
     invoice_id: invoice.id,
     amount_received: amountReceived,
     currency_received: currencyReceived,
-    amount_converted: amountConverted,
-    fx_rate: fx?.rate ?? null,
-    fx_timestamp: fx ? new Date(`${fx.date}T00:00:00Z`).toISOString() : null,
-    stripe_payment_intent:
-      typeof session.payment_intent === "string"
-        ? session.payment_intent
-        : (session.payment_intent?.id ?? null),
+    fx_rate: fxRate,
+    fx_timestamp: fxTimestamp,
+    stripe_payment_intent: piId,
     paid_at: paidAt.toISOString(),
   });
 

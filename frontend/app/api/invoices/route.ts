@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/app/lib/server/supabase";
-import { getStripe } from "@/app/lib/server/stripe";
 import { sendPaymentLinkEmail } from "@/app/lib/server/resend";
 import { InvoiceData } from "@/app/lib/invoice";
 
@@ -50,7 +49,6 @@ export async function POST(req: Request) {
   const body = parsed;
 
   const supabase = getSupabaseAdmin();
-  const stripe = getStripe();
 
   const { data: inserted, error: insertErr } = await supabase
     .from("invoices")
@@ -77,76 +75,34 @@ export async function POST(req: Request) {
 
   const baseUrl =
     process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
-
-  let session;
-  try {
-    session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency: body.currency.toLowerCase(),
-            unit_amount: Math.round(body.amount * 100),
-            product_data: {
-              name: `Invoice ${body.invoice_number}`,
-              description: body.description || undefined,
-            },
-          },
-        },
-      ],
-      customer_email: body.client_email,
-      success_url: `${baseUrl}/invoices/${invoiceId}/proof?paid=1`,
-      cancel_url: `${baseUrl}/invoices/${invoiceId}`,
-      metadata: {
-        invoice_id: invoiceId,
-        invoice_no: body.invoice_number,
-      },
-    });
-  } catch (e) {
-    console.error("[invoices] stripe session failed", e);
-    return NextResponse.json(
-      { error: "Failed to create payment link" },
-      { status: 502 },
-    );
-  }
-
-  if (!session.url) {
-    return NextResponse.json(
-      { error: "Stripe returned no URL" },
-      { status: 502 },
-    );
-  }
+  const payUrl = `${baseUrl}/invoices/${invoiceId}/pay`;
 
   const { error: updateErr } = await supabase
     .from("invoices")
-    .update({
-      stripe_session_id: session.id,
-      payment_link: session.url,
-    })
+    .update({ payment_link: payUrl })
     .eq("id", invoiceId);
 
   if (updateErr) {
-    console.error("[invoices] update with stripe ids failed", updateErr);
+    console.error("[invoices] update with pay link failed", updateErr);
   }
 
   try {
     await sendPaymentLinkEmail({
       intendedRecipient: body.recipient_email || body.client_email,
       invoice: body,
-      paymentUrl: session.url,
+      paymentUrl: payUrl,
     });
   } catch (e) {
     console.error("[invoices] resend failed", e);
     return NextResponse.json(
       {
         id: invoiceId,
-        payment_link: session.url,
+        payment_link: payUrl,
         warning: "Invoice created but email failed to send",
       },
       { status: 207 },
     );
   }
 
-  return NextResponse.json({ id: invoiceId, payment_link: session.url });
+  return NextResponse.json({ id: invoiceId, payment_link: payUrl });
 }
