@@ -3,7 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export function ProofUploadForm({ invoiceId }: { invoiceId: string }) {
+export function ProofUploadForm({
+  invoiceId,
+  allowSkip = true,
+}: {
+  invoiceId: string;
+  allowSkip?: boolean;
+}) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -76,14 +82,16 @@ export function ProofUploadForm({ invoiceId }: { invoiceId: string }) {
         >
           {submitting ? "Uploading…" : "Upload proof"}
         </button>
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={submitting || skipping}
-          className="text-sm text-zinc-600 underline-offset-2 hover:underline hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-50"
-        >
-          {skipping ? "Skipping…" : "Skip for now →"}
-        </button>
+        {allowSkip ? (
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={submitting || skipping}
+            className="text-sm text-zinc-600 underline-offset-2 hover:underline hover:text-zinc-900 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-50"
+          >
+            {skipping ? "Skipping…" : "Skip for now →"}
+          </button>
+        ) : null}
       </div>
     </form>
   );

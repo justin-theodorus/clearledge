@@ -50,7 +50,7 @@ def get_invoice(invoice_id: str) -> dict:
     client = get_supabase()
     res = (
         client.table("invoices")
-        .select("id,invoice_no,client_name,amount,currency")
+        .select("id,invoice_no,client_name,amount,currency,payment_method,status,created_at")
         .eq("id", invoice_id)
         .limit(1)
         .execute()
@@ -137,3 +137,41 @@ def insert_audit_log(payload: dict) -> dict:
     res = client.table("audit_logs").insert(payload).execute()
     rows = res.data or []
     return rows[0] if rows else {}
+
+
+def insert_transaction(payload: dict) -> dict:
+    client = get_supabase()
+    res = client.table("transactions").insert(payload).execute()
+    rows = res.data or []
+    return rows[0] if rows else {}
+
+
+def insert_gmail_verification(payload: dict) -> dict:
+    client = get_supabase()
+    res = client.table("gmail_verifications").insert(payload).execute()
+    rows = res.data or []
+    return rows[0] if rows else {}
+
+
+def get_latest_gmail_verification(invoice_id: str) -> Optional[dict]:
+    client = get_supabase()
+    res = (
+        client.table("gmail_verifications")
+        .select("status,checks,gmail_message_id,created_transaction_id,searched_at")
+        .eq("invoice_id", invoice_id)
+        .order("searched_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def get_gmail_token(sme_id: str = "default") -> Optional[dict]:
+    key = os.environ.get("GMAIL_TOKEN_KEY")
+    if not key:
+        raise RuntimeError("GMAIL_TOKEN_KEY env var is required to decrypt gmail tokens")
+    client = get_supabase()
+    res = client.rpc("gmail_token_get", {"p_sme_id": sme_id, "p_key": key}).execute()
+    rows = res.data or []
+    return rows[0] if rows else None

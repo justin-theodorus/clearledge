@@ -16,13 +16,14 @@ export default async function ProofUploadPage({
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from("invoices")
-    .select("id,invoice_no,amount,currency,status")
+    .select("id,invoice_no,amount,currency,status,payment_method")
     .eq("id", id)
     .maybeSingle();
 
   if (!data) notFound();
 
   const stillPending = data.status === "PENDING";
+  const isBankTransfer = data.payment_method === "BANK_TRANSFER";
 
   return (
     <div className="mx-auto w-full max-w-2xl px-6 py-10">
@@ -33,8 +34,10 @@ export default async function ProofUploadPage({
         Upload payment proof
       </h1>
       <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-        {formatMoney(Number(data.amount), data.currency)} — optional, but helps
-        us reconcile faster.
+        {formatMoney(Number(data.amount), data.currency)}
+        {isBankTransfer
+          ? " — required for bank transfers so we can match it to your DBS notification email."
+          : " — optional, but helps us reconcile faster."}
       </p>
 
       {paid === "1" && stillPending ? (
@@ -52,7 +55,7 @@ export default async function ProofUploadPage({
       ) : null}
 
       <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <ProofUploadForm invoiceId={data.id} />
+        <ProofUploadForm invoiceId={data.id} allowSkip={!isBankTransfer} />
       </div>
     </div>
   );

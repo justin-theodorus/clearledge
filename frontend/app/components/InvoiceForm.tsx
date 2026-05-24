@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent } from "react";
 import {
   InvoiceData,
+  PaymentMethod,
   generateInvoiceNumber,
   saveDraft,
 } from "@/app/lib/invoice";
@@ -26,6 +27,7 @@ export function InvoiceForm() {
       due_date: String(fd.get("due_date") ?? ""),
       description: String(fd.get("description") ?? "").trim(),
       issued_at: new Date().toISOString(),
+      payment_method: (String(fd.get("payment_method") ?? "STRIPE") as PaymentMethod),
     };
     saveDraft(data);
     router.push("/invoices/new/send");
@@ -92,6 +94,41 @@ export function InvoiceForm() {
           required
           className={inputClass}
         />
+      </Field>
+
+      <Field label="Payment method" htmlFor="payment_method">
+        <div className="flex flex-col gap-2 text-sm">
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-zinc-300 p-3 hover:border-zinc-900 dark:border-zinc-700 dark:hover:border-zinc-50">
+            <input
+              type="radio"
+              name="payment_method"
+              value="STRIPE"
+              defaultChecked
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block font-medium">Stripe checkout</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                Card, PayNow, GrabPay, FPX. Settles automatically.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-zinc-300 p-3 hover:border-zinc-900 dark:border-zinc-700 dark:hover:border-zinc-50">
+            <input
+              type="radio"
+              name="payment_method"
+              value="BANK_TRANSFER"
+              className="mt-0.5"
+            />
+            <span>
+              <span className="block font-medium">Bank transfer</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400">
+                Client transfers manually. Proof upload is mandatory and we
+                cross-check your DBS &ldquo;received&rdquo; email.
+              </span>
+            </span>
+          </label>
+        </div>
       </Field>
 
       <Field label="Description (optional)" htmlFor="description">

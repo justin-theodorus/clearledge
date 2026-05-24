@@ -37,12 +37,20 @@ export default function RootLayout({
             >
               ClearLedge
             </Link>
-            <Link
-              href="/invoices/new"
-              className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
-            >
-              New invoice
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link
+                href="/settings"
+                className="text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
+              >
+                Settings
+              </Link>
+              <Link
+                href="/invoices/new"
+                className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 dark:bg-zinc-50 dark:text-black dark:hover:bg-zinc-300"
+              >
+                New invoice
+              </Link>
+            </div>
           </div>
         </header>
         <main className="flex flex-1 flex-col">{children}</main>

@@ -31,6 +31,11 @@ function validate(body: unknown): Body | string {
   if (b.recipient_email != null && typeof b.recipient_email !== "string") {
     return "recipient_email must be a string";
   }
+  if (b.payment_method == null) {
+    b.payment_method = "STRIPE";
+  } else if (b.payment_method !== "STRIPE" && b.payment_method !== "BANK_TRANSFER") {
+    return "payment_method must be STRIPE or BANK_TRANSFER";
+  }
   return b as unknown as Body;
 }
 
@@ -59,7 +64,8 @@ export async function POST(req: Request) {
       amount: body.amount,
       currency: body.currency.toUpperCase(),
       due_date: body.due_date,
-      status: "PENDING",
+      payment_method: body.payment_method,
+      status: body.payment_method === "BANK_TRANSFER" ? "AWAITING_TRANSFER" : "PENDING",
     })
     .select("id")
     .single();

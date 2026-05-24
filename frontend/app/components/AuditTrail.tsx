@@ -16,7 +16,10 @@ export type AuditEntry = {
 };
 
 const POLL_INTERVAL_MS = 2000;
-const MAX_POLL_MS = 90_000;
+// Long enough to cover the slowest case: ~10 Chutes calls (~5-30s each) for
+// the first orchestrator run, the 5-minute retry-once delay for
+// BANK_TRANSFER, plus the second run. 10 minutes leaves slack.
+const MAX_POLL_MS = 10 * 60 * 1000;
 
 export function AuditTrail({
   invoiceId,
@@ -30,8 +33,27 @@ export function AuditTrail({
   const router = useRouter();
   const [entries, setEntries] = useState<AuditEntry[]>(initialEntries);
   const [pending, setPending] = useState(initialPending);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const baselineCount = useRef(initialEntries.length);
   const startedAt = useRef(Date.now());
+
+  async function handleRetry() {
+    setRetryError(null);
+    try {
+      const res = await fetch(`/api/invoices/${invoiceId}/retry`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? "Retry failed");
+      }
+      baselineCount.current = entries.length;
+      startedAt.current = Date.now();
+      setPending(true);
+    } catch (e) {
+      setRetryError(e instanceof Error ? e.message : "Retry failed");
+    }
+  }
 
   useEffect(() => {
     if (!pending) return;
@@ -45,11 +67,12 @@ export function AuditTrail({
         if (!res.ok) return;
         const json = (await res.json()) as { entries: AuditEntry[] };
         if (cancelled) return;
-        if (json.entries.length > baselineCount.current) {
+        // Keep refreshing entries on every tick so the BANK_TRANSFER
+        // retry-once run also surfaces without a manual refresh. We only
+        // stop polling once the MAX_POLL_MS window has elapsed.
+        if (json.entries.length !== entries.length) {
           setEntries(json.entries);
-          setPending(false);
           router.refresh();
-          return;
         }
       } catch {
         // swallow — try again next tick
@@ -65,22 +88,40 @@ export function AuditTrail({
       cancelled = true;
       clearInterval(handle);
     };
-  }, [pending, invoiceId, router]);
+  }, [pending, invoiceId, entries.length, router]);
 
   return (
     <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Audit trail</h2>
-        {pending ? (
-          <span className="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-            Reconciling…
-          </span>
-        ) : null}
+        <div className="flex items-center gap-3">
+          {pending ? (
+            <span className="inline-flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+              Reconciling…
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleRetry}
+            disabled={pending}
+            title="Re-run the reconciliation pipeline"
+            aria-label="Retry reconciliation"
+            className="inline-flex items-center gap-1 rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            <RetryIcon className={pending ? "animate-spin" : ""} />
+            Retry
+          </button>
+        </div>
       </div>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
         Every Matcher decision recorded for this invoice.
       </p>
+      {retryError ? (
+        <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+          {retryError}
+        </p>
+      ) : null}
 
       {pending && entries.length === 0 ? (
         <div className="mt-4 space-y-3">
@@ -133,6 +174,25 @@ export function AuditTrail({
         </ul>
       )}
     </div>
+  );
+}
+
+function RetryIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`h-3.5 w-3.5 ${className}`}
+      aria-hidden
+    >
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v5h5" />
+    </svg>
   );
 }
 

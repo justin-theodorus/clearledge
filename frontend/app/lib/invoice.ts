@@ -1,3 +1,5 @@
+export type PaymentMethod = "STRIPE" | "BANK_TRANSFER";
+
 export type InvoiceData = {
   invoice_number: string;
   client_name: string;
@@ -7,6 +9,7 @@ export type InvoiceData = {
   due_date: string;
   description: string;
   issued_at: string;
+  payment_method: PaymentMethod;
 };
 
 const STORAGE_KEY = "clearledge:invoice-draft";

@@ -20,7 +20,7 @@ export async function POST(
 
   const { data: invoice, error: invErr } = await supabase
     .from("invoices")
-    .select("id")
+    .select("id,payment_method")
     .eq("id", invoiceId)
     .maybeSingle();
   if (invErr) {
@@ -78,7 +78,9 @@ export async function POST(
     return NextResponse.json({ error: "Failed to save proof" }, { status: 500 });
   }
 
-  triggerOrchestrator(invoiceId);
+  triggerOrchestrator(invoiceId, {
+    retryOnce: invoice.payment_method === "BANK_TRANSFER",
+  });
 
   return NextResponse.json({ id: row.id, proof_url: proofUrl });
 }
