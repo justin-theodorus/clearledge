@@ -199,19 +199,26 @@ export function RingMeter({
   value,
   size = 64,
   stroke = 6,
+  pulsing = false,
 }: {
   value: number;
   size?: number;
   stroke?: number;
+  pulsing?: boolean;
 }) {
   const v = Math.max(0, Math.min(1, value));
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const offset = c * (1 - v);
-  const tone = v >= 0.85 ? "var(--cl-emerald)" : v >= 0.6 ? "var(--cl-amber)" : "var(--cl-rose)";
+  // While pulsing (pipeline running, no audit yet) animate an indeterminate
+  // sweep instead of a 0% ring.
+  const indeterminate = pulsing && v === 0;
+  const offset = indeterminate ? c * 0.7 : c * (1 - v);
+  const tone = pulsing
+    ? "var(--cl-primary-400)"
+    : v >= 0.85 ? "var(--cl-emerald)" : v >= 0.6 ? "var(--cl-amber)" : "var(--cl-rose)";
   return (
-    <div style={{ position: "relative", width: size, height: size }}>
-      <svg width={size} height={size} className="cl-ring">
+    <div style={{ position: "relative", width: size, height: size }} className={pulsing ? "cl-ring-pulse" : undefined}>
+      <svg width={size} height={size} className={clsx("cl-ring", indeterminate && "cl-ring-spin")}>
         <circle cx={size / 2} cy={size / 2} r={r} strokeWidth={stroke} className="cl-ring-track" />
         <circle
           cx={size / 2}
@@ -238,7 +245,7 @@ export function RingMeter({
           color: "var(--cl-fg)",
         }}
       >
-        {v.toFixed(2)}
+        {indeterminate ? "…" : v.toFixed(2)}
       </div>
     </div>
   );

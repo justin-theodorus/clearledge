@@ -7,6 +7,7 @@ import { InvoiceStatus } from "@/app/components/StatusBadge";
 import { ConfBar, Money, clsx } from "@/app/components/ui/primitives";
 import { formatDate, formatMoney } from "@/app/lib/invoice";
 import { REGIONS } from "@/app/lib/regions";
+import { ManualPaymentForm } from "./ManualPaymentForm";
 
 type Invoice = {
   id: string;
@@ -134,6 +135,14 @@ function OverviewTab({ invoice, copyLinkButton }: { invoice: Invoice; copyLinkBu
             )}
           </div>
         </div>
+
+        {invoice.payment_method === "BANK_TRANSFER" && invoice.status === "AWAITING_TRANSFER" ? (
+          <ManualPaymentForm
+            invoiceId={invoice.id}
+            defaultAmount={Number(invoice.amount)}
+            defaultCurrency={invoice.currency}
+          />
+        ) : null}
 
         <div className="cl-card">
           <div className="cl-card-head"><h2>Accepted methods</h2></div>

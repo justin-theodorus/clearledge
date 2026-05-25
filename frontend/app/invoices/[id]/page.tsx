@@ -95,12 +95,39 @@ export default async function InvoiceDetailPage({
   const auditEntries = (auditRes.data ?? []) as (AuditEntry & { signals?: Record<string, unknown> })[];
   const latestAudit = auditEntries[0] ?? null;
 
-  const pipelineStages = pipelineFromAudit(latestAudit, !!proof);
+  const pipelineStages = pipelineFromAudit(latestAudit, !!proof, !!txn);
   const confidence = latestAudit ? Number(latestAudit.confidence) : 0;
+
+  const pipelinePhase: "idle" | "awaiting-payment" | "awaiting-proof" | "running" | "done" =
+    latestAudit
+      ? "done"
+      : proof
+        ? "running"
+        : txn
+          ? "awaiting-proof"
+          : invoice.status === "PENDING" || invoice.status === "AWAITING_TRANSFER"
+            ? "awaiting-payment"
+            : "idle";
+
+  // Stable runKey: change every poll cycle while running so LivePipeline
+  // restarts its cascade and keeps motion visible. Once finalized, lock to audit.id.
+  const runKey = latestAudit
+    ? latestAudit.id
+    : proof
+      ? `running:${proof.id}`
+      : txn
+        ? `awaiting-proof`
+        : `idle`;
 
   return (
     <>
-      <AuditWatcher invoiceId={invoice.id} initialCount={auditEntries.length} />
+      <AuditWatcher
+        invoiceId={invoice.id}
+        initialCount={auditEntries.length}
+        initialHasProof={!!proof}
+        initialHasTxn={!!txn}
+        initialInvoiceStatus={invoice.status}
+      />
       <div className="cl-row-between" style={{ marginBottom: 16 }}>
         <Link href="/invoices" className="cl-btn is-ghost is-sm">
           <ChevronLeft size={14} /> Back to invoices
@@ -141,15 +168,17 @@ export default async function InvoiceDetailPage({
           </div>
         </div>
         <div className="cl-row-gap">
-          <RingMeter value={confidence} size={64} stroke={6} />
+          <RingMeter value={confidence} size={64} stroke={6} pulsing={pipelinePhase === "running"} />
           <div>
             <div className="cl-h3" style={{ marginBottom: 4 }}>Match confidence</div>
             <div className="cl-row-gap" style={{ gap: 8, flexWrap: "wrap" }}>
               {latestAudit ? (
                 <StatusBadge status={latestAudit.status} />
-              ) : null}
+              ) : (
+                <PhasePill phase={pipelinePhase} />
+              )}
               <span className="cl-subtle" style={{ fontSize: 12 }}>
-                {latestAudit ? auditHeadline(latestAudit.status) : "Pipeline not yet run"}
+                {latestAudit ? auditHeadline(latestAudit.status) : phaseHeadline(pipelinePhase)}
               </span>
               {latestAudit?.capped ? (
                 <span className="cl-tag" style={{ color: "var(--cl-amber)" }}>Capped</span>
@@ -158,11 +187,23 @@ export default async function InvoiceDetailPage({
           </div>
         </div>
         <div>
-          <div className="cl-h3" style={{ marginBottom: 6 }}>Agent pipeline</div>
+          <div className="cl-row-between" style={{ marginBottom: 6 }}>
+            <div className="cl-h3">Agent pipeline</div>
+            {pipelinePhase === "running" ? (
+              <span className="cl-subtle" style={{ fontSize: 11, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span className="cl-dot-pulse" /> Reconciling…
+              </span>
+            ) : pipelinePhase === "awaiting-payment" ? (
+              <span className="cl-subtle" style={{ fontSize: 11 }}>Waiting for payment</span>
+            ) : pipelinePhase === "awaiting-proof" ? (
+              <span className="cl-subtle" style={{ fontSize: 11 }}>Waiting for proof upload</span>
+            ) : null}
+          </div>
           <LivePipeline
             target={pipelineStages}
-            runKey={latestAudit?.id ?? "empty"}
+            runKey={runKey}
             compact
+            stepMs={900}
           />
         </div>
       </div>
@@ -186,6 +227,28 @@ export default async function InvoiceDetailPage({
       />
     </>
   );
+}
+
+type PipelinePhase = "idle" | "awaiting-payment" | "awaiting-proof" | "running" | "done";
+
+function PhasePill({ phase }: { phase: PipelinePhase }) {
+  if (phase === "awaiting-payment") {
+    return <span className="cl-tag" style={{ color: "var(--cl-fg-muted)" }}>Awaiting payment</span>;
+  }
+  if (phase === "awaiting-proof") {
+    return <span className="cl-tag" style={{ color: "var(--cl-fg-muted)" }}>Awaiting proof</span>;
+  }
+  if (phase === "running") {
+    return <span className="cl-tag" style={{ color: "var(--cl-primary-400)" }}>Reconciling…</span>;
+  }
+  return <span className="cl-tag" style={{ color: "var(--cl-fg-muted)" }}>Idle</span>;
+}
+
+function phaseHeadline(phase: PipelinePhase): string {
+  if (phase === "awaiting-payment") return "Waiting for client to complete payment";
+  if (phase === "awaiting-proof") return "Payment received — waiting for proof upload";
+  if (phase === "running") return "Agents are reconciling this invoice";
+  return "Pipeline not yet run";
 }
 
 function auditHeadline(status: InvoiceStatus): string {

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "remotion-marketing-video": {
+      "source": "xsourabhsharma/remotion-marketing-video-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "8b5d65444ad0c896731a6a799f1577ce914b8a0c9d128197142a2cdc475dc410"
+    }
+  }
+}
