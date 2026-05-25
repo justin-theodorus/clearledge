@@ -560,16 +560,15 @@ button { font-family: inherit; }
   background: var(--cl-surface-1);
   border: 1px solid var(--cl-border);
   border-radius: var(--cl-radius-xl);
-  position: relative;
-  overflow: hidden;
 }
 .cl-stat .cl-stat-label { font-size: 11.5px; color: var(--cl-fg-subtle); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
-.cl-stat .cl-stat-val { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; color: var(--cl-fg); margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.cl-stat .cl-stat-main { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.cl-stat .cl-stat-val { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; color: var(--cl-fg); font-variant-numeric: tabular-nums; line-height: 1.1; }
 .cl-stat .cl-stat-val .cl-stat-curr { font-family: var(--font-jetbrains), ui-monospace, monospace; font-weight: 500; font-size: 14px; color: var(--cl-fg-subtle); margin-right: 4px; }
 .cl-stat .cl-stat-foot { margin-top: 10px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--cl-fg-muted); }
 .cl-stat .cl-delta-up { color: var(--cl-emerald); }
 .cl-stat .cl-delta-down { color: var(--cl-rose); }
-.cl-stat .cl-stat-spark { position: absolute; right: 14px; top: 14px; opacity: 0.9; height: 28px; }
+.cl-stat .cl-stat-spark { opacity: 0.9; flex-shrink: 0; }
 .cl-grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
 @media (max-width: 1200px) { .cl-grid-2 { grid-template-columns: 1fr; } }
 

@@ -1,0 +1,29 @@
+# env files — never commit these
+.env
+.env.local
+.env*.local
+frontend/.env
+frontend/.env.local
+frontend/.env*.local
+backend/.env
+
+# dependencies
+node_modules/
+frontend/node_modules/
+backend/.venv/
+
+# Next.js
+frontend/.next/
+frontend/out/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# misc
+.DS_Store
+*.log

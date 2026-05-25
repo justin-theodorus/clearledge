@@ -32,19 +32,40 @@ type AuditRow = {
   invoices: { invoice_no: string; client_name: string } | null;
 };
 
-type TxnRow = {
-  amount_received: number;
-  currency_received: string;
-  fx_rate: number | null;
-  paid_at: string;
-  invoice_id: string;
-};
+
+async function fetchFxRate(from: string, to: string): Promise<number | null> {
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=${to}`, { next: { revalidate: 3600 } });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.rates?.[to] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFxHistory(from: string, to: string): Promise<number[]> {
+  try {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 13);
+    const startStr = start.toISOString().slice(0, 10);
+    const endStr = end.toISOString().slice(0, 10);
+    const res = await fetch(`https://api.frankfurter.app/${startStr}..${endStr}?from=${from}&to=${to}`, { next: { revalidate: 3600 } });
+    if (!res.ok) return [];
+    const json = await res.json();
+    const rates = json.rates as Record<string, Record<string, number>>;
+    return Object.keys(rates).sort().map((date) => rates[date][to]);
+  } catch {
+    return [];
+  }
+}
 
 export default async function DashboardPage() {
   await requireAdmin();
   const supabase = getSupabaseAdmin();
 
-  const [invoicesRes, auditRes, txnRes] = await Promise.all([
+  const [invoicesRes, auditRes, txnRes, usdMyr, sgdMyr, usdMyrHistory, sgdMyrHistory] = await Promise.all([
     supabase
       .from("invoices")
       .select("id,invoice_no,client_name,client_email,amount,currency,status,created_at,due_date")
@@ -60,17 +81,17 @@ export default async function DashboardPage() {
       .select("amount_received,currency_received,fx_rate,paid_at,invoice_id")
       .order("paid_at", { ascending: false })
       .limit(200),
+    fetchFxRate("USD", "MYR"),
+    fetchFxRate("SGD", "MYR"),
+    fetchFxHistory("USD", "MYR"),
+    fetchFxHistory("SGD", "MYR"),
   ]);
 
   const invoices = (invoicesRes.data ?? []) as InvoiceRow[];
   const audits = (auditRes.data ?? []) as unknown as AuditRow[];
-  const txns = (txnRes.data ?? []) as TxnRow[];
+  void txnRes;
 
   /* ─── Stats ─── */
-  const outstanding = invoices
-    .filter((i) => ["PENDING", "AWAITING_TRANSFER", "PAID"].includes(i.status))
-    .reduce((s, i) => s + Number(i.amount), 0);
-
   const todayKey = new Date().toISOString().slice(0, 10);
   const reconciledToday = invoices.filter(
     (i) => i.status === "RECONCILED" && i.created_at.slice(0, 10) >= todayKey,
@@ -80,10 +101,6 @@ export default async function DashboardPage() {
     (i) => i.status === "AWAITING_TRANSFER" || i.status === "PAID",
   ).length;
 
-  const fxExposure = txns.reduce((s, t) => {
-    if (t.fx_rate && t.fx_rate !== 1) return s + Number(t.amount_received);
-    return s;
-  }, 0);
 
   /* ─── 30-day stacked chart ─── */
   const byDay = new Map<string, StackedDay>();
@@ -105,18 +122,29 @@ export default async function DashboardPage() {
   }
   const chart = Array.from(byDay.values());
 
-  /* ─── Sparklines (last 14 days invoice counts by category) ─── */
-  // eslint-disable-next-line react-hooks/purity
+  /* ─── Sparklines ─── */
+  const trendColor = (data: number[]) => {
+    if (data.length < 2) return "var(--cl-primary-400)";
+    const last = data[data.length - 1];
+    const prev = data[data.length - 2];
+    return last >= prev ? "#22c55e" : "#ef4444";
+  };
+  const dailyChange = (data: number[]): number | undefined => {
+    if (data.length < 2) return undefined;
+    const last = data[data.length - 1];
+    const prev = data[data.length - 2];
+    if (!prev) return undefined;
+    return ((last - prev) / prev) * 100;
+  };
   const nowMs = Date.now();
-  const sparkCount = (predicate: (i: InvoiceRow) => boolean): number[] => {
+  const sparkCumulative = (predicate: (i: InvoiceRow) => boolean): number[] => {
     const arr = Array(14).fill(0);
     for (const inv of invoices) {
       if (!predicate(inv)) continue;
-      const days = Math.floor(
-        (nowMs - new Date(inv.created_at).getTime()) / 86400000,
-      );
+      const days = Math.floor((nowMs - new Date(inv.created_at).getTime()) / 86400000);
       if (days >= 0 && days < 14) arr[13 - days] += 1;
     }
+    for (let i = 1; i < arr.length; i++) arr[i] += arr[i - 1];
     return arr;
   };
 
@@ -159,32 +187,34 @@ export default async function DashboardPage() {
 
       <div className="cl-stat-grid">
         <StatCard
-          label="Outstanding"
-          currency="SGD"
-          value={outstanding.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          delta={4.2}
-          deltaLabel="vs last week"
-          spark={sparkCount((i) => ["PENDING", "AWAITING_TRANSFER", "PAID"].includes(i.status))}
+          label="USD / MYR"
+          value={usdMyr ? usdMyr.toFixed(4) : "—"}
+          deltaLabel="real-time rate"
+          spark={usdMyrHistory}
+          sparkColor={trendColor(usdMyrHistory)}
+          change={dailyChange(usdMyrHistory)}
         />
         <StatCard
           label="Reconciled today"
           value={String(reconciledToday)}
           deltaLabel={`of ${invoices.length} total`}
-          spark={sparkCount((i) => i.status === "RECONCILED")}
+          spark={sparkCumulative((i: InvoiceRow) => i.status === "RECONCILED")}
+          sparkColor={trendColor(sparkCumulative((i: InvoiceRow) => i.status === "RECONCILED"))}
         />
         <StatCard
           label="Pending proofs"
           value={String(pendingProofs)}
           deltaLabel="awaiting upload"
-          spark={sparkCount((i) => i.status === "AWAITING_TRANSFER" || i.status === "PAID")}
+          spark={sparkCumulative((i: InvoiceRow) => i.status === "AWAITING_TRANSFER" || i.status === "PAID")}
+          sparkColor={trendColor(sparkCumulative((i: InvoiceRow) => i.status === "AWAITING_TRANSFER" || i.status === "PAID"))}
         />
         <StatCard
-          label="FX exposure"
-          currency="USD"
-          value={fxExposure.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          delta={-1.1}
-          deltaLabel="cross-border txns"
-          spark={sparkCount((i) => i.status === "PARTIAL")}
+          label="SGD / MYR"
+          value={sgdMyr ? sgdMyr.toFixed(4) : "—"}
+          deltaLabel="real-time rate"
+          spark={sgdMyrHistory}
+          sparkColor={trendColor(sgdMyrHistory)}
+          change={dailyChange(sgdMyrHistory)}
         />
       </div>
 

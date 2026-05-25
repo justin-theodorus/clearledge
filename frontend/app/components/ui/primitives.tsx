@@ -160,6 +160,8 @@ export function StatCard({
   delta,
   deltaLabel,
   spark,
+  sparkColor,
+  change,
 }: {
   label: string;
   value: string;
@@ -167,13 +169,34 @@ export function StatCard({
   delta?: number;
   deltaLabel?: string;
   spark?: number[];
+  sparkColor?: string;
+  change?: number;
 }) {
+  const color = sparkColor ?? "var(--cl-primary-400)";
   return (
     <div className="cl-stat">
       <div className="cl-stat-label">{label}</div>
-      <div className="cl-stat-val">
-        {currency ? <span className="cl-stat-curr">{currency}</span> : null}
-        {value}
+      <div className="cl-stat-main">
+        <div className="cl-stat-val">
+          {currency ? <span className="cl-stat-curr">{currency}</span> : null}
+          {value}
+          {change !== undefined ? (
+            <span style={{
+              fontSize: 12,
+              fontWeight: 500,
+              marginLeft: 6,
+              color: change >= 0 ? "#22c55e" : "#ef4444",
+              letterSpacing: 0,
+            }}>
+              {change >= 0 ? "+" : ""}{change.toFixed(2)}%
+            </span>
+          ) : null}
+        </div>
+        {spark && spark.length > 0 ? (
+          <div className="cl-stat-spark">
+            <Sparkline data={spark} width={80} height={32} color={color} />
+          </div>
+        ) : null}
       </div>
       {(delta !== undefined || deltaLabel) && (
         <div className="cl-stat-foot">
@@ -185,11 +208,6 @@ export function StatCard({
           {deltaLabel ? <span>{deltaLabel}</span> : null}
         </div>
       )}
-      {spark ? (
-        <div className="cl-stat-spark">
-          <Sparkline data={spark} width={80} height={28} />
-        </div>
-      ) : null}
     </div>
   );
 }
